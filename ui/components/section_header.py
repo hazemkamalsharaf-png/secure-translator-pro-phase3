@@ -7,7 +7,7 @@ Usage:
 """
 
 import customtkinter as ctk
-from ui.theme import ThemeManager
+from ui.theme import ThemeManager, token_pair
 
 theme = ThemeManager.get_instance()
 
@@ -24,12 +24,12 @@ class SectionHeader(ctk.CTkFrame):
             self,
             text=title,
             font=theme.ctk_font("label"),
-            text_color=theme.color("text"),
+            text_color=token_pair("text"),
             anchor="w",
         )
         lbl.grid(row=0, column=0, padx=0, pady=8, sticky="w")
 
         # Bottom line
-        line = ctk.CTkFrame(self, fg_color=theme.color("border"), height=1, corner_radius=0)
+        line = ctk.CTkFrame(self, fg_color=token_pair("border"), height=1, corner_radius=0)
         line.grid(row=1, column=0, sticky="ew", pady=(0, 0))
         self.grid_rowconfigure(1, weight=0)

@@ -21,6 +21,9 @@ STRINGS = {
     "tab_translation": "Translation",
     "tab_glossary": "Glossary",
     "tab_settings": "Settings",
+    "sidebar_tagline": "Private workspace",
+    "theme_switch_light": "Switch to light",
+    "theme_switch_dark": "Switch to dark",
 
     # Translation tab
     "trans_title": "Translation Workspace",

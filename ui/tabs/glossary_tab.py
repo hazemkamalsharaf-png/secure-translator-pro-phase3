@@ -2,12 +2,12 @@ import os
 import customtkinter as ctk
 from tkinter import messagebox as _tk_msgbox
 from data.database import GlossaryManager
-from ui.theme import ThemeManager
+from ui.theme import ThemeManager, token_pair, entry_style
 from ui.strings import t
 from ui.asset_path import data_dir
 from ui.components.card import Card
 from ui.components.toast import Toast
-from ui.components.button import PrimaryButton, DangerButton, GhostButton
+from ui.components.button import PrimaryButton, DangerGhostButton
 
 theme = ThemeManager.get_instance()
 
@@ -20,7 +20,7 @@ class GlossaryTab(ctk.CTkFrame):
     """
 
     def __init__(self, master):
-        super().__init__(master, fg_color=theme.color("bg"))
+        super().__init__(master, fg_color=token_pair("bg"))
 
         # Unified path resolution via asset_path module
         self.db_path = os.path.join(data_dir(), "glossary.db")
@@ -28,95 +28,78 @@ class GlossaryTab(ctk.CTkFrame):
 
         self._toast = Toast(self)
 
-        # --- Header row: title, search bar, add button ---
-        self.header_frame = ctk.CTkFrame(self, fg_color=theme.color("surface"), corner_radius=0)
-        self.header_frame.pack(fill="x", side="top")
-        self.header_frame.grid_columnconfigure(1, weight=1)
-        self.header_frame.grid_rowconfigure(1, weight=0)
+        self.toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        self.toolbar.pack(fill="x", side="top", padx=24, pady=(16, 0))
+        self.toolbar.grid_columnconfigure(0, weight=1)
 
-        # Title
-        title_lbl = ctk.CTkLabel(
-            self.header_frame,
-            text=t("tab_glossary"),
-            font=theme.ctk_font("heading"),
-            text_color=theme.color("text"),
-            anchor="w",
-        )
-        title_lbl.grid(row=0, column=0, padx=(24, 16), pady=16, sticky="w")
-
-        # Search bar
         self.search_var = ctk.StringVar()
         self.search_entry = ctk.CTkEntry(
-            self.header_frame,
+            self.toolbar,
             textvariable=self.search_var,
             placeholder_text=t("glossary_search_placeholder"),
             font=theme.ctk_font("body"),
             height=36,
             corner_radius=theme.radius("sm"),
             border_width=1,
-            border_color=theme.color("border"),
+            **entry_style(),
         )
-        self.search_entry.grid(row=0, column=1, padx=(0, 8), pady=12, sticky="ew")
+        self.search_entry.grid(row=0, column=0, padx=(0, 8), sticky="ew")
         self.search_var.trace_add("write", lambda *args: self._refresh_table())
 
-        # Add Term button
         self.btn_add = PrimaryButton(
-            self.header_frame,
+            self.toolbar,
             text=t("glossary_add_term"),
             command=self._toggle_add_form,
             height=36,
-            width=120,
+            width=140,
         )
-        self.btn_add.grid(row=0, column=2, padx=(0, 24), pady=12)
+        self.btn_add.grid(row=0, column=1, sticky="e")
 
-        # Bottom border line for header
-        self.header_line = ctk.CTkFrame(
-            self.header_frame,
-            height=1,
-            fg_color=theme.color("border"),
-            corner_radius=0,
-        )
-        self.header_line.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(4, 8))
-
-        # --- Scrollable body ---
-        self.scroll_frame = ctk.CTkScrollableFrame(self, fg_color=theme.color("bg"))
+        self.scroll_frame = ctk.CTkScrollableFrame(self, fg_color=token_pair("bg"))
         self.scroll_frame.pack(fill="both", expand=True)
 
         # Add term form (initially hidden)
         self.add_form_frame = ctk.CTkFrame(
             self.scroll_frame,
-            fg_color=theme.color("surface"),
+            fg_color=token_pair("surface"),
             corner_radius=theme.radius("md"),
             border_width=1,
-            border_color=theme.color("border"),
+            border_color=token_pair("border"),
         )
-        self.add_form_frame.pack(fill="x", padx=24, pady=(16, 8), side="top")
 
-        # --- Table header row ---
-        self.table_header = ctk.CTkFrame(
+        self.table_shell = ctk.CTkFrame(
             self.scroll_frame,
-            fg_color=theme.color("primary"),
+            fg_color=token_pair("surface"),
+            corner_radius=theme.radius("lg"),
+            border_width=1,
+            border_color=token_pair("border"),
+        )
+        self.table_shell.pack(fill="both", expand=True, padx=24, pady=(12, 24), side="top")
+
+        self.table_header = ctk.CTkFrame(
+            self.table_shell,
+            fg_color="transparent",
             corner_radius=0,
         )
-        self.table_header.pack(fill="x", padx=24, pady=(8, 0), side="top")
+        self.table_header.pack(fill="x", side="top")
 
         header_source_lbl = ctk.CTkLabel(
             self.table_header,
             text=t("glossary_term_label"),
-            font=theme.ctk_font("label"),
-            text_color="#ffffff",
+            font=theme.ctk_font("small", weight="bold"),
+            text_color=token_pair("text_muted"),
             anchor="w",
         )
-        header_source_lbl.pack(side="left", fill="x", padx=16, pady=(8, 8), expand=True)
+        header_source_lbl.pack(side="left", fill="x", padx=16, pady=(12, 8), expand=True)
 
         header_target_lbl = ctk.CTkLabel(
             self.table_header,
             text=t("glossary_translation_label"),
-            font=theme.ctk_font("label"),
-            text_color="#ffffff",
+            font=theme.ctk_font("small", weight="bold"),
+            text_color=token_pair("text_muted"),
             anchor="w",
         )
-        header_target_lbl.pack(side="left", fill="x", padx=(0, 16), pady=(8, 8), expand=True)
+        header_target_lbl.pack(side="left", fill="x", padx=(0, 16), pady=(12, 8), expand=True)
 
         header_action_lbl = ctk.CTkLabel(
             self.table_header,
@@ -127,21 +110,25 @@ class GlossaryTab(ctk.CTkFrame):
         header_action_lbl.pack(side="right", padx=16, pady=(8, 8))
 
         # --- Glossary entries container ---
-        self.entries_frame = ctk.CTkFrame(self.scroll_frame, fg_color=theme.color("bg"))
-        self.entries_frame.pack(fill="both", expand=True, padx=24, pady=8, side="top")
+        ctk.CTkFrame(
+            self.table_shell, height=1, fg_color=token_pair("border_light"), corner_radius=0,
+        ).pack(fill="x", side="top")
+
+        self.entries_frame = ctk.CTkFrame(self.table_shell, fg_color="transparent")
+        self.entries_frame.pack(fill="both", expand=True, side="top")
 
         # --- Empty state (shown when no entries) ---
         self.empty_label = ctk.CTkLabel(
-            self.scroll_frame,
+            self.entries_frame,
             text=f"{t('glossary_empty_title')}\n{t('glossary_empty_hint')}",
             font=theme.ctk_font("body"),
-            text_color=theme.color("text_muted"),
+            text_color=token_pair("text_muted"),
             anchor="center",
+            justify="center",
         )
-        self.empty_label.pack(fill="both", expand=True, padx=24, pady=(100, 32), side="top")
 
-        # Track entry rows for alternating colors
         self._entry_rows = []
+        self._refresh_table()
 
     def _toggle_add_form(self):
         """Show or hide the one-row add-term form."""
@@ -154,12 +141,13 @@ class GlossaryTab(ctk.CTkFrame):
             child.destroy()
 
         self.add_form_frame.grid_columnconfigure(1, weight=1)
+        self.add_form_frame.grid_columnconfigure(3, weight=1)
 
         term_lbl = ctk.CTkLabel(
             self.add_form_frame,
             text=t("glossary_term_label"),
             font=theme.ctk_font("label"),
-            text_color=theme.color("text"),
+            text_color=token_pair("text"),
         )
         term_lbl.grid(row=0, column=0, padx=(16, 8), pady=12, sticky="w")
 
@@ -171,6 +159,8 @@ class GlossaryTab(ctk.CTkFrame):
             font=theme.ctk_font("body"),
             height=36,
             corner_radius=theme.radius("sm"),
+            border_width=1,
+            **entry_style(),
         )
         add_entry.grid(row=0, column=1, padx=(0, 8), pady=12, sticky="ew")
 
@@ -178,7 +168,7 @@ class GlossaryTab(ctk.CTkFrame):
             self.add_form_frame,
             text=t("glossary_translation_label"),
             font=theme.ctk_font("label"),
-            text_color=theme.color("text"),
+            text_color=token_pair("text"),
         )
         trans_lbl.grid(row=0, column=2, padx=(8, 8), pady=12, sticky="w")
 
@@ -190,6 +180,8 @@ class GlossaryTab(ctk.CTkFrame):
             font=theme.ctk_font("body"),
             height=36,
             corner_radius=theme.radius("sm"),
+            border_width=1,
+            **entry_style(),
         )
         add_trans_entry.grid(row=0, column=3, padx=(0, 8), pady=12, sticky="ew")
 
@@ -205,7 +197,7 @@ class GlossaryTab(ctk.CTkFrame):
         )
         btn.grid(row=0, column=4, padx=(0, 16), pady=12)
 
-        self.add_form_frame.pack(fill="x", padx=24, pady=(16, 8), side="top")
+        self.add_form_frame.pack(fill="x", padx=24, pady=(16, 0), side="top", before=self.table_shell)
         add_entry.focus_set()
 
     def _add_term(self):
@@ -242,15 +234,15 @@ class GlossaryTab(ctk.CTkFrame):
         if filtered:
             self.empty_label.pack_forget()
         else:
-            self.empty_label.pack(fill="both", expand=True, padx=24, pady=(100, 32), side="top")
+            self.empty_label.pack(fill="x", padx=16, pady=36)
 
         for idx, (term, translation) in enumerate(filtered):
-            bg = theme.color("surface_hover") if idx % 2 == 0 else theme.color("surface")
+            bg = token_pair("surface_hover") if idx % 2 == 0 else token_pair("surface")
             row_frame = ctk.CTkFrame(
                 self.entries_frame,
                 fg_color=bg,
                 corner_radius=0,
-                height=48,
+                height=44,
             )
             row_frame.pack(fill="x", side="top")
 
@@ -258,7 +250,7 @@ class GlossaryTab(ctk.CTkFrame):
                 row_frame,
                 text=term,
                 font=theme.ctk_font("body"),
-                text_color=theme.color("text"),
+                text_color=token_pair("text"),
                 anchor="w",
             )
             term_lbl.pack(side="left", fill="x", padx=(16, 8), pady=(0, 0), expand=True)
@@ -267,18 +259,18 @@ class GlossaryTab(ctk.CTkFrame):
                 row_frame,
                 text=translation,
                 font=theme.ctk_font("body"),
-                text_color=theme.color("text_muted"),
+                text_color=token_pair("text_muted"),
                 anchor="w",
             )
             trans_lbl.pack(side="left", fill="x", padx=(0, 8), pady=(0, 0), expand=True)
 
             # Delete button (right-aligned)
-            del_btn = GhostButton(
+            del_btn = DangerGhostButton(
                 row_frame,
                 text=t("glossary_delete"),
-                command=lambda t=term: self._delete_term(t),
+                command=lambda term=term: self._delete_term(term),
                 height=28,
-                width=70,
+                width=72,
             )
             del_btn.pack(side="right", padx=(0, 16))
 
@@ -287,10 +279,11 @@ class GlossaryTab(ctk.CTkFrame):
                 line = ctk.CTkFrame(
                     self.entries_frame,
                     height=1,
-                    fg_color=theme.color("border_light"),
+                    fg_color=token_pair("border_light"),
                     corner_radius=0,
                 )
-                line.pack(fill="x", padx=(24, 24))
+                line.pack(fill="x")
+                self._entry_rows.append(line)
 
             self._entry_rows.append(row_frame)
 

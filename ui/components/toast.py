@@ -8,7 +8,7 @@ Usage:
 
 import customtkinter as ctk
 import threading
-from ui.theme import ThemeManager
+from ui.theme import ThemeManager, token_pair
 
 theme = ThemeManager.get_instance()
 
@@ -67,8 +67,8 @@ class Toast:
         fg_col, bg_col = _toast_colors(kind)
 
         # Calculate position relative to master's screen position
-        master_x = self.master.winfo_x()
-        master_y = self.master.winfo_y()
+        master_x = self.master.winfo_rootx()
+        master_y = self.master.winfo_rooty()
         master_w = self.master.winfo_width()
 
         # Find how many active toasts exist for stacking
@@ -102,7 +102,7 @@ class Toast:
         # Message
         lbl_msg = ctk.CTkLabel(
             frame, text=message, font=ctk.CTkFont(size=11),
-            text_color=theme.color("text_muted"), anchor="w",
+            text_color=token_pair("text_muted"), anchor="w",
             wraplength=self.TOAST_WIDTH - 60,
         )
         lbl_msg.pack(side="top", padx=14, pady=(0, 8), anchor="w", fill="x")
@@ -111,7 +111,7 @@ class Toast:
         btn_close = ctk.CTkButton(
             frame, text=_CLOSE_ICON, width=22, height=22, corner_radius=6,
             fg_color="transparent", hover_color=bg_col,
-            text_color=theme.color("text_muted"),
+            text_color=token_pair("text_muted"),
             command=lambda: self._dismiss(top),
         )
         btn_close.pack(side="right", padx=10, pady=6)

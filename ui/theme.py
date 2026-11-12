@@ -5,64 +5,110 @@ Color tokens, spacing, radius, and fonts for Light/Dark modes.
 No hard-coded colors in widgets — all styles reference theme tokens.
 """
 
-import customtkinter as ctk
-import sys
 import os
+import sys
+import customtkinter as ctk
 
 
 # ---------------------------------------------------------------------------
 # Theme colour tokens — Light and Dark variants
+# Surfaces are layered: bg < surface (cards) < elevated; inputs sit apart.
 # ---------------------------------------------------------------------------
 THEMES = {
     "light": {
-        "bg":            "#f0f2f5",
+        "bg":            "#f3f5f9",
         "surface":       "#ffffff",
-        "surface_hover": "#f5f6f8",
+        "surface_hover": "#eef1f7",
         "elevated":      "#ffffff",
-        "border":        "#e0e3e8",
-        "border_light":  "#eef0f3",
-        "primary":       "#4a6cf7",
-        "primary_hover": "#3b5de7",
-        "accent":        "#6366f1",
-        "success":       "#22c55e",
-        "warning":       "#f59e0b",
-        "danger":        "#ef4444",
-        "danger_hover":  "#dc2626",
-        "text":          "#1e293b",
+        "input":         "#f8fafc",
+        "border":        "#e2e6ef",
+        "border_light":  "#eef1f6",
+        "primary":       "#4f46e5",
+        "primary_hover": "#4338ca",
+        "primary_soft":  "#eef2ff",
+        "accent":        "#4f46e5",
+        "success":       "#15803d",
+        "warning":       "#b45309",
+        "danger":        "#dc2626",
+        "danger_hover":  "#b91c1c",
+        "danger_soft":   "#fef2f2",
+        "text":          "#0f172a",
         "text_muted":    "#64748b",
-        "text_secondary":"#94a3b8",
-        "sidebar_bg":    "#0f172a",
-        "sidebar_fg":    "#e2e8f0",
-        "sidebar_active":"#1e293b",
-        "sidebar_icon":  "#64748b",
-        "sidebar_active_icon": "#f1f5f9",
-        "text_accent":       "#ffffff",  # always light text on colored buttons
+        "text_secondary": "#748096",
+        "sidebar_bg":    "#10172a",
+        "sidebar_fg":    "#f8fafc",
+        "sidebar_active": "#1c2744",
+        "sidebar_hover": "#172039",  # NEW
+        "sidebar_icon":  "#94a3b8",
+        "sidebar_active_icon": "#ffffff",
+        "text_accent":   "#ffffff",
     },
     "dark": {
-        "bg":            "#0f172a",
-        "surface":       "#1e293b",
-        "surface_hover": "#263348",
-        "elevated":      "#1e293b",
-        "border":        "#334155",
-        "border_light":  "#1e293b",
+        "bg":            "#0b1020",
+        "surface":       "#141a2e",
+        "surface_hover": "#1c2540",
+        "elevated":      "#1a2238",
+        "input":         "#0f1528",
+        "border":        "#2a3554",
+        "border_light":  "#222c48",
         "primary":       "#6366f1",
         "primary_hover": "#818cf8",
+        "primary_soft":  "#1e1b4b",
         "accent":        "#818cf8",
         "success":       "#4ade80",
         "warning":       "#fbbf24",
         "danger":        "#f87171",
         "danger_hover":  "#fca5a5",
-        "text":          "#f1f5f9",
+        "danger_soft":   "#3f1d24",
+        "text":          "#f8fafc",
         "text_muted":    "#94a3b8",
-        "text_secondary":"#64748b",
-        "sidebar_bg":    "#0b1120",
-        "sidebar_fg":    "#e2e8f0",
-        "sidebar_active":"#1e293b",
-        "sidebar_icon":    "#64748b",
-        "sidebar_active_icon": "#f1f5f9",
-        "text_accent":       "#ffffff",  # always light text on colored buttons
+        "text_secondary": "#7b88a1",
+        "sidebar_bg":    "#080d1a",
+        "sidebar_fg":    "#f8fafc",
+        "sidebar_active": "#1c2744",
+        "sidebar_hover": "#121a30",  # NEW
+        "sidebar_icon":  "#94a3b8",
+        "sidebar_active_icon": "#ffffff",
+        "text_accent":   "#ffffff",
     },
 }
+
+
+def token_pair(name: str):
+    """(light, dark) colour pair so CustomTkinter swaps with appearance mode."""
+    return (THEMES["light"][name], THEMES["dark"][name])
+
+
+def entry_style():
+    """Shared colours for text fields, combo boxes, and text areas."""
+    return {
+        "fg_color": token_pair("input"),
+        "border_color": token_pair("border"),
+        "text_color": token_pair("text"),
+        "placeholder_text_color": token_pair("text_secondary"),
+    }
+
+
+def combo_style():
+    style = entry_style()
+    style.pop("placeholder_text_color", None)
+    style.update({
+        "button_color": token_pair("surface_hover"),
+        "button_hover_color": token_pair("border"),
+        "dropdown_fg_color": token_pair("surface"),
+        "dropdown_hover_color": token_pair("surface_hover"),
+        "dropdown_text_color": token_pair("text"),
+    })
+    return style
+
+
+def radio_style():
+    return {
+        "fg_color": token_pair("primary"),
+        "hover_color": token_pair("primary_hover"),
+        "border_color": token_pair("border"),
+        "text_color": token_pair("text"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -85,16 +131,21 @@ FONTS = {
     "mega":     (28, "bold"),      # Hero / display
 }
 
-# ---------------------------------------------------------------------------
-# Arabic font fallback chain — loaded at app startup
-# ---------------------------------------------------------------------------
 ARABIC_FONT_FAMILY = "IBM Plex Sans Arabic"
-ARABIC_FONT_FALLBACK = "Arial"
+
+
+def _fallback_family() -> str:
+    """Best system UI font per platform (Tk falls back further if missing)."""
+    if sys.platform == "win32":
+        return "Segoe UI"
+    if sys.platform == "darwin":
+        return "Helvetica Neue"
+    return "Noto Sans"
+
 
 # ---------------------------------------------------------------------------
-# Token lookup helpers
+# Theme manager
 # ---------------------------------------------------------------------------
-
 class ThemeManager:
     """Manages the current theme and provides colour tokens."""
     _instance = None
@@ -106,23 +157,22 @@ class ThemeManager:
         return cls._instance
 
     def __init__(self):
-        self._current_mode = "light"  # will be set during init
+        self._current_mode = "light"
         self._fonts = {}
+        self._font_cache = {}
         self._icon_cache = {}
-        # Register Arabic font at startup
         self._register_arabic_font()
 
     def _register_arabic_font(self):
-        """Register IBM Plex Sans Arabic font so Arabic text renders correctly."""
+        """Load IBM Plex Sans Arabic (works on Windows and Linux via CTk's FontManager)."""
         try:
             from ui.asset_path import assets_path
             font_path = assets_path("fonts/IBM_Plex_Sans_Arabic.ttf")
             if os.path.exists(font_path):
-                fm = ctk.FontManager()
-                fm.windows_load_font(font_path, "IBM Plex Sans Arabic")
+                ctk.FontManager.load_font(font_path)
                 self._fonts[ARABIC_FONT_FAMILY] = font_path
         except Exception:
-            pass  # Font registration is best-effort; app falls back gracefully
+            pass  # best-effort; falls back to the system font
 
     # -- colour helpers -----------------------------------------------------
     def color(self, token: str, mode: str = None) -> str:
@@ -145,18 +195,20 @@ class ThemeManager:
     # -- font helpers -------------------------------------------------------
     def register_font(self, family: str, path: str):
         try:
-            ctk.CTkFont.register_font(family=family, source=path)
+            ctk.FontManager.load_font(path)
         except Exception:
             pass
         self._fonts[family] = path
 
     def font(self, name: str, size: int = None, weight: str = None, mode: str = None):
         h, w = FONTS.get(name, (13, "normal"))
-        return ctk.CTkFont(
-            family=self._fonts.get(ARABIC_FONT_FAMILY, "sans-serif"),
-            size=(size if size is not None else h),
-            weight=(weight if weight else w),
-        )
+        family = ARABIC_FONT_FAMILY if ARABIC_FONT_FAMILY in self._fonts else _fallback_family()
+        size = size if size is not None else h
+        weight = weight if weight else w
+        key = (family, size, weight)
+        if key not in self._font_cache:
+            self._font_cache[key] = ctk.CTkFont(family=family, size=size, weight=weight)
+        return self._font_cache[key]
 
     def ctk_font(self, name: str, size: int = None, weight: str = None):
         return self.font(name, size, weight)
@@ -173,12 +225,9 @@ class ThemeManager:
 
     # -- icon helpers -------------------------------------------------------
     def get_icon(self, name: str, mode: str = None):
-        """Return a cached CTkImage for the given icon name."""
+        """Return a cached CTkImage for the given icon name (None if not registered)."""
         mode = mode or self._current_mode
-        key = f"{name}_{mode}"
-        if key in self._icon_cache:
-            return self._icon_cache[key]
-        return None
+        return self._icon_cache.get(f"{name}_{mode}")
 
     def register_icon(self, name: str, light_img, dark_img):
         self._icon_cache[f"{name}_light"] = light_img
@@ -190,78 +239,27 @@ class ThemeManager:
 
 
 # ---------------------------------------------------------------------------
-# Apply theme to a CTk widget recursively
+# Appearance sync
+# ---------------------------------------------------------------------------
+def sync_appearance(mode: str):
+    """Keep CustomTkinter's built-in light/dark swap aligned with our tokens."""
+    if mode not in ("light", "dark"):
+        return
+    ctk.set_appearance_mode(mode)
+
+
+# ---------------------------------------------------------------------------
+# Backward-compat no-ops.
+# Widgets use (light, dark) colour pairs, so appearance mode already restyles
+# everything. The old recursive painters flattened cards/sidebar to one colour.
 # ---------------------------------------------------------------------------
 def apply_theme(widget, theme_tokens: dict, dark: bool = True):
-    """Apply colour tokens to a widget and all its children (recursive)."""
-    wfg = theme_tokens["surface"] if dark else theme_tokens["bg"]
-    if hasattr(widget, "configure"):
-        if hasattr(widget, "fg_color") and widget.cget("fg_color") not in ("transparent", "system"):
-            widget.configure(fg_color=wfg)
-        if hasattr(widget, "bg") and not hasattr(widget, "fg_color"):
-            try:
-                widget.configure(bg=wfg)
-            except tk.TclError:
-                pass
-        if hasattr(widget, "text_color") and hasattr(widget, "cget") and "color" in str(widget.cget("text_color")):
-            pass  # handled separately
-    for child in widget.winfo_children():
-        apply_theme(child, theme_tokens, dark)
+    return None
 
 
 def apply_theme_to_widget(widget, cfg: dict, dark: bool = True):
-    """Apply a specific config dict to a widget (single level, no recursion)."""
-    fg = cfg.get("surface" if dark else "bg")
-    border = cfg.get("border_light" if dark else "border")
-    if hasattr(widget, "configure"):
-        if hasattr(widget, "fg_color"):
-            widget.configure(fg_color=fg)
-        if hasattr(widget, "border_color"):
-            widget.configure(border_color=border)
+    return None
 
 
-# ---------------------------------------------------------------------------
-# Apply theme to CustomTkinter appearance mode (light/dark)
-# ---------------------------------------------------------------------------
 def apply_app_theme(app, theme_tokens: dict, dark: bool = True):
-    """Apply colours to the main window and all children."""
-    fg = theme_tokens["bg"]
-    bg = theme_tokens["bg"]
-    if hasattr(app, "configure"):
-        app.configure(fg_color=fg)
-    for child in app.winfo_children():
-        _style_widget(child, theme_tokens, dark)
-    # Progress bar
-    if hasattr(app, "progress_bar"):
-        try:
-            app.progress_bar.configure(
-                progress_color=theme_tokens["primary"],
-                fg_color=theme_tokens["border_light"] if dark else theme_tokens["border"],
-            )
-        except Exception:
-            pass
-
-
-def _style_widget(widget, theme_tokens, dark=True):
-    """Apply theme colours to a single widget level."""
-    fg = theme_tokens["surface"] if dark else theme_tokens["bg"]
-    border = theme_tokens["border_light"] if dark else theme_tokens["border"]
-    text = theme_tokens["text"]
-    muted = theme_tokens["text_muted"]
-
-    attrs = {}
-    if hasattr(widget, "fg_color"):
-        val = widget.cget("fg_color")
-        if val not in ("transparent",):
-            attrs["fg_color"] = fg
-    if hasattr(widget, "border_color"):
-        attrs["border_color"] = border
-    if hasattr(widget, "text_color") and not hasattr(widget, "fg_color"):
-        attrs["text_color"] = text
-    for k, v in attrs.items():
-        try:
-            widget.configure(**{k: v})
-        except Exception:
-            pass
-    for child in widget.winfo_children():
-        _style_widget(child, theme_tokens, dark)
+    return None

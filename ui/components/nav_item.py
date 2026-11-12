@@ -2,124 +2,154 @@
 Sidebar navigation item — icon + label with hover and active states.
 
 Usage:
-    nav = NavItem(sidebar_frame, icon="book", label="Translation", command=cb)
+    nav = NavItem(sidebar_frame, icon_name="book", label="Translation", command=cb)
     nav.pack(fill="x", padx=12, pady=2)
     nav.activate() / nav.deactivate()
 """
 
 import customtkinter as ctk
-from ui.theme import ThemeManager
-from ui.asset_path import assets_path
+from ui.theme import ThemeManager, THEMES, token_pair
+from ui.icon_factory import render_icon
 
 theme = ThemeManager.get_instance()
+
+ICON_DISPLAY = 20   # logical size
+ICON_RENDER = 40    # rendered at 2x so it stays sharp on HiDPI
+
+# The sidebar is dark in BOTH themes, so icons use fixed colours
+# (never the light/dark image swap that caused the black squares).
+_ICON_NORMAL = THEMES["dark"]["sidebar_icon"]
+_ICON_ACTIVE = THEMES["dark"]["sidebar_active_icon"]
+
+
+def _hover_color():
+    try:
+        return token_pair("sidebar_hover")
+    except KeyError:  # token not added yet
+        return token_pair("sidebar_active")
 
 
 class NavItem(ctk.CTkFrame):
     """A single sidebar navigation item with icon, label, hover, and active states."""
 
+    HEIGHT = 42
+
     def __init__(self, master, icon_name: str, label: str, command=None,
                  group: str = "nav"):
-        super().__init__(master, fg_color="transparent", corner_radius=8)
+        super().__init__(master, fg_color="transparent", corner_radius=10,
+                         height=self.HEIGHT)
         self._command = command
         self._icon_name = icon_name
         self._label = label
         self._active = False
 
-        # Internal content frame (this gets the hover/active bg color)
-        self._content = ctk.CTkFrame(self, fg_color="transparent", corner_radius=8)
-        self._content.pack(fill="x", padx=10, pady=3)
+        # Row layout: [accent bar] [icon] [label ........]
+        self.grid_propagate(False)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(2, weight=1)
 
-        # Icon + label in a tight row
-        icon_row = ctk.CTkFrame(self._content, fg_color="transparent")
-        icon_row.pack(side="left", fill="y")
-
-        # Icon label — load CTkImage from assets or fallback to Unicode
-        self._icon_label = ctk.CTkLabel(
-            icon_row,
-            text="",
-            font=ctk.CTkFont(size=16),
-            text_color=theme.color("sidebar_icon"),
+        self._accent = ctk.CTkFrame(
+            self, width=3, height=20, corner_radius=2, fg_color="transparent",
         )
-        self._icon_label.pack(side="left", padx=(0, 10), pady=4)
-        self._icon_image = None
-        self._update_icon()
+        self._accent.grid(row=0, column=0, padx=(8, 0))
 
-        # Text label
+        self._icon_normal, self._icon_active = self._build_icons()
+        self._icon_label = ctk.CTkLabel(
+            self,
+            text="" if self._icon_normal else _icon_char(icon_name),
+            image=self._icon_normal,
+            width=24,
+            font=ctk.CTkFont(size=16),
+            text_color=token_pair("sidebar_icon"),
+        )
+        self._icon_label.grid(row=0, column=1, padx=(10, 10))
+
         self._text_label = ctk.CTkLabel(
-            icon_row,
+            self,
             text=label,
             font=theme.ctk_font("body"),
-            text_color=theme.color("sidebar_icon"),
+            text_color=token_pair("sidebar_icon"),
             anchor="w",
         )
-        self._text_label.pack(side="left", pady=4, fill="y")
+        self._text_label.grid(row=0, column=2, sticky="ew", padx=(0, 12))
 
-        # Bind hover events to the outer frame and content frame
-        self.bind("<Enter>", self._on_enter)
-        self.bind("<Leave>", self._on_leave)
-        self._content.bind("<Enter>", self._on_enter)
-        self._content.bind("<Leave>", self._on_leave)
-        self._content.bind("<Button-1>", self._on_click)
+        for w in (self, self._accent, self._icon_label, self._text_label):
+            w.bind("<Enter>", self._on_enter, add="+")
+            w.bind("<Leave>", self._on_leave, add="+")
+            w.bind("<Button-1>", self._on_click, add="+")
+            try:
+                w.configure(cursor="hand2")
+            except Exception:
+                pass
 
-    def _get_icon_paths(self, name: str):
-        """Return (light_path, dark_path) for the given icon name."""
-        light_path = assets_path(f"icons/{name}_light.png")
-        dark_path = assets_path(f"icons/{name}_dark.png")
-        return light_path, dark_path
+    # ------------------------------------------------------------------
+    # Icons
+    # ------------------------------------------------------------------
+    def _build_icons(self):
+        normal = render_icon(self._icon_name, _ICON_NORMAL, ICON_RENDER)
+        active = render_icon(self._icon_name, _ICON_ACTIVE, ICON_RENDER)
+        if normal is None or active is None:
+            return None, None
+        size = (ICON_DISPLAY, ICON_DISPLAY)
+        return (
+            ctk.CTkImage(light_image=normal, dark_image=normal, size=size),
+            ctk.CTkImage(light_image=active, dark_image=active, size=size),
+        )
 
-    def _update_icon(self):
-        """Update the icon image based on current theme."""
-        light_path, dark_path = self._get_icon_paths(self._icon_name)
+    # ------------------------------------------------------------------
+    # Events
+    # ------------------------------------------------------------------
+    def _pointer_inside(self):
         try:
-            from PIL import Image
-            light_pil = Image.open(light_path)
-            dark_pil = Image.open(dark_path)
-            size = (20, 20)
-            light_pil = light_pil.resize(size, Image.LANCZOS)
-            dark_pil = dark_pil.resize(size, Image.LANCZOS)
-            self._icon_image = ctk.CTkImage(
-                light_image=light_pil, dark_image=dark_pil, size=size
-            )
-            self._icon_label.configure(image=self._icon_image, text="")
+            widget = self.winfo_containing(self.winfo_pointerx(), self.winfo_pointery())
         except Exception:
-            # Fallback: Unicode icon character
-            self._icon_image = None
-            self._icon_label.configure(image=None, text=_icon_char(self._icon_name))
+            return False
+        while widget is not None:
+            if widget is self:
+                return True
+            widget = getattr(widget, "master", None)
+        return False
 
     def _on_enter(self, event=None):
         if not self._active:
-            self._content.configure(fg_color=theme.color("sidebar_active"))
+            self.configure(fg_color=_hover_color())
 
     def _on_leave(self, event=None):
-        if not self._active:
-            self._content.configure(fg_color="transparent")
+        if self._active or self._pointer_inside():
+            return
+        self.configure(fg_color="transparent")
 
     def _on_click(self, event=None):
         if self._command:
             self._command()
+        return "break"
 
+    # ------------------------------------------------------------------
+    # State
+    # ------------------------------------------------------------------
     def activate(self):
-        """Set this item to active state."""
         self._active = True
-        self.configure(fg_color="transparent")
-        # Active background with rounded corners
-        self._content.configure(
-            fg_color=theme.color("sidebar_active"),
-        )
-        self._icon_label.configure(text_color=theme.color("sidebar_active_icon"))
+        self.configure(fg_color=token_pair("sidebar_active"))
+        self._accent.configure(fg_color=token_pair("primary"))
+        if self._icon_active:
+            self._icon_label.configure(image=self._icon_active)
+        else:
+            self._icon_label.configure(text_color=token_pair("sidebar_active_icon"))
         self._text_label.configure(
-            text_color=theme.color("sidebar_active_icon"),
-            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=token_pair("sidebar_active_icon"),
+            font=theme.ctk_font("body", weight="bold"),
         )
 
     def deactivate(self):
-        """Set this item to inactive state."""
         self._active = False
         self.configure(fg_color="transparent")
-        self._content.configure(fg_color="transparent")
-        self._icon_label.configure(text_color=theme.color("sidebar_icon"))
+        self._accent.configure(fg_color="transparent")
+        if self._icon_normal:
+            self._icon_label.configure(image=self._icon_normal)
+        else:
+            self._icon_label.configure(text_color=token_pair("sidebar_icon"))
         self._text_label.configure(
-            text_color=theme.color("sidebar_icon"),
+            text_color=token_pair("sidebar_icon"),
             font=theme.ctk_font("body"),
         )
 
@@ -128,23 +158,23 @@ class NavItem(ctk.CTkFrame):
 
 
 def _icon_char(name: str) -> str:
-    """Return a Unicode icon character fallback for the given icon name."""
+    """Plain-symbol fallback (no emoji: Tk often can't render them on Linux)."""
     icons = {
-        "book":       "\U0001F4D6",      # 📖 Open book
-        "glossary":   "\U0001F5A7\ufe0f", # 🖧 Notebook with decorative cover
-        "settings":   "\u2699\ufe0f",     # ⚙️ Gear
-        "theme":      "\U0001F319",       # 🌙 Crescent moon
-        "search":     "\U0001F50D",       # 🔍 Magnifying glass
-        "check":      "\u2705",           # ✅ White check mark
-        "x":          "\u274C",           # ❌ Cross mark (better contrast than ✖)
-        "play":       "\u25B6\ufe0f",     # ▶️ Play button
-        "save":       "\U0001F4BE",       # 💾 Floppy disk
-        "delete":     "\U0001F5D1\ufe0f", # 🗑️ Wastebasket
-        "file":       "\U0001F4C4",       # 📄 Page facing up
-        "folder":     "\U0001F4C1",       # 📁 File folder
-        "close":      "\u274C",           # ❌ Cross mark
-        "moon":       "\U0001F319",       # 🌙 Crescent moon
-        "sun":        "\u2600\ufe0f",     # ☀️ Sun
-        "translate":  "\U0001F4E1",       # 📡 Satellite antenna / translation
+        "book": "▤",
+        "glossary": "▥",
+        "settings": "⚙",
+        "theme": "◐",
+        "search": "⌕",
+        "check": "✓",
+        "x": "✕",
+        "close": "✕",
+        "play": "▶",
+        "save": "▣",
+        "delete": "✕",
+        "file": "▤",
+        "folder": "▸",
+        "moon": "☾",
+        "sun": "☀",
+        "translate": "⇄",
     }
-    return icons.get(name, "\u25CF")
+    return icons.get(name, "●")

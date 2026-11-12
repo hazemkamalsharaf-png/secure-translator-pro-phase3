@@ -1,5 +1,5 @@
 """
-Styled button variants with hover/pressed/disabled states.
+Styled button variants with hover and disabled states.
 
 Usage:
     btn = PrimaryButton(parent, text="Start", command=cb)
@@ -9,9 +9,11 @@ Usage:
 """
 
 import customtkinter as ctk
-from ui.theme import ThemeManager
+from ui.theme import ThemeManager, token_pair
 
 theme = ThemeManager.get_instance()
+
+_ON_FILL = ("#ffffff", "#ffffff")
 
 
 class StyledButton(ctk.CTkButton):
@@ -19,10 +21,10 @@ class StyledButton(ctk.CTkButton):
 
     def __init__(self, master, text, command=None, variant="primary",
                  font_name=None, height=36, width=None, **kwargs):
-        # Default font
-        btn_font = theme.ctk_font("label") if font_name is None else ctk.CTkFont(
-            family=font_name, size=13, weight="normal"
+        btn_font = theme.ctk_font("label", weight="bold") if font_name is None else ctk.CTkFont(
+            family=font_name, size=13, weight="bold"
         )
+        self._variant = variant
 
         super().__init__(
             master,
@@ -31,56 +33,54 @@ class StyledButton(ctk.CTkButton):
             height=height,
             width=width,
             corner_radius=theme.radius("sm"),
+            border_width=0,
             command=command,
             **kwargs,
         )
-        self._variant = variant
-        self._original_hover = None
-        self._original_fg = None
+        self._set_colors(variant)
 
     def _set_colors(self, variant="primary"):
+        border_width = 0
+        border_color = token_pair("border")
+
         if variant == "primary":
-            fg = theme.color("primary")
-            hover = theme.color("primary_hover")
-            disabled_fg = theme.color("text_secondary")
+            fg = token_pair("primary")
+            hover = token_pair("primary_hover")
+            text = _ON_FILL
         elif variant == "secondary":
-            fg = theme.color("surface_hover")
-            hover = theme.color("border")
-            disabled_fg = theme.color("text_muted")
+            fg = token_pair("surface")
+            hover = token_pair("surface_hover")
+            text = token_pair("text")
+            border_width = 1
         elif variant == "ghost":
             fg = "transparent"
-            hover = theme.color("surface_hover")
-            disabled_fg = theme.color("text_muted")
+            hover = token_pair("surface_hover")
+            text = token_pair("text")
         elif variant == "danger":
-            fg = theme.color("danger")
-            hover = theme.color("danger_hover")
-            disabled_fg = theme.color("danger")
+            fg = token_pair("danger")
+            hover = token_pair("danger_hover")
+            text = _ON_FILL
+        elif variant == "danger-ghost":
+            fg = "transparent"
+            hover = token_pair("danger_soft")
+            text = token_pair("danger")
         else:
-            fg = theme.color("primary")
-            hover = theme.color("primary_hover")
-            disabled_fg = theme.color("text_secondary")
+            fg = token_pair("primary")
+            hover = token_pair("primary_hover")
+            text = _ON_FILL
 
         self.configure(
             fg_color=fg,
             hover_color=hover,
-            text_color=theme.color("text") if variant == "ghost" else theme.color("text_accent"),
+            text_color=text,
+            text_color_disabled=token_pair("text_secondary"),
+            border_width=border_width,
+            border_color=border_color,
         )
-        self._original_hover = hover
-        self._original_fg = fg
 
     def set_variant(self, variant):
         self._variant = variant
         self._set_colors(variant)
-
-    def configure(self, **kwargs):
-        # Override fg_color and hover_color for variant buttons
-        if "fg_color" in kwargs:
-            # Let the variant system handle it for styled variants
-            if kwargs["fg_color"] not in ("transparent",):
-                pass  # variant system will override
-        if "hover_color" in kwargs:
-            pass  # variant system handles it
-        super().configure(**kwargs)
 
 
 class PrimaryButton(StyledButton):
@@ -101,3 +101,8 @@ class GhostButton(StyledButton):
 class DangerButton(StyledButton):
     def __init__(self, master, text, command=None, **kwargs):
         super().__init__(master, text, command, variant="danger", **kwargs)
+
+
+class DangerGhostButton(StyledButton):
+    def __init__(self, master, text, command=None, **kwargs):
+        super().__init__(master, text, command, variant="danger-ghost", **kwargs)

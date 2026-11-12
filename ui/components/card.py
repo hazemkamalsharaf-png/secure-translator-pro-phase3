@@ -8,7 +8,7 @@ Usage:
 """
 
 import customtkinter as ctk
-from ui.theme import ThemeManager
+from ui.theme import ThemeManager, token_pair
 
 theme = ThemeManager.get_instance()
 
@@ -25,8 +25,8 @@ class Card(ctk.CTkFrame):
             master,
             corner_radius=_radius,
             border_width=1,
-            border_color=theme.color("border"),
-            fg_color=theme.color("surface"),
+            border_color=token_pair("border"),
+            fg_color=token_pair("surface"),
             **kwargs,
         )
 
@@ -45,8 +45,8 @@ class Card(ctk.CTkFrame):
             self._title_label = ctk.CTkLabel(
                 self._title_frame,
                 text=title,
-                font=theme.ctk_font("subhead"),
-                text_color=theme.color("text"),
+                font=theme.ctk_font("label", weight="bold"),
+                text_color=token_pair("text"),
                 anchor="w",
             )
             self._title_label.grid(row=0, column=0, padx=_pad, pady=_pad, sticky="w")
@@ -55,7 +55,7 @@ class Card(ctk.CTkFrame):
             self._title_line = ctk.CTkFrame(
                 self._title_frame,
                 height=1,
-                fg_color=theme.color("border"),
+                fg_color=token_pair("border_light"),
                 corner_radius=0,
             )
             self._title_line.grid(row=1, column=0, sticky="ew", padx=_pad)
@@ -80,8 +80,9 @@ class Card(ctk.CTkFrame):
             self._actions,
             text=text,
             font=theme.ctk_font("small"),
-            fg_color=theme.color("surface_hover"),
-            hover_color=theme.color("border"),
+            fg_color=token_pair("surface_hover"),
+            hover_color=token_pair("border"),
+            text_color=token_pair("text"),
             corner_radius=theme.radius("sm"),
             height=24,
             width=60,

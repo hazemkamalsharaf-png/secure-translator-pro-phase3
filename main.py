@@ -2,7 +2,7 @@
 import sys
 import os
 from ui.main_window import MainWindow
-from ui.theme import ThemeManager
+from ui.theme import ThemeManager, sync_appearance
 from ui.asset_path import data_dir
 from data.config import ConfigManager
 
@@ -26,6 +26,7 @@ def main():
     config = ConfigManager(config_path)
     theme_mode = config.get("theme_mode") or "dark"
     ThemeManager.get_instance().set_mode(theme_mode)
+    sync_appearance(theme_mode)
 
     app = MainWindow(config_manager=config)
     app.mainloop()

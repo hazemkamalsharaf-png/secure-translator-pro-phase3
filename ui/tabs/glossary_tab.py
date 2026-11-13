@@ -236,7 +236,7 @@ class GlossaryTab(ctk.CTkFrame):
         else:
             self.empty_label.pack(fill="x", padx=16, pady=36)
 
-        for idx, (term, translation) in enumerate(filtered):
+        for idx, item in enumerate(filtered):
             bg = token_pair("surface_hover") if idx % 2 == 0 else token_pair("surface")
             row_frame = ctk.CTkFrame(
                 self.entries_frame,
@@ -248,7 +248,7 @@ class GlossaryTab(ctk.CTkFrame):
 
             term_lbl = ctk.CTkLabel(
                 row_frame,
-                text=term,
+                text=item["source"],
                 font=theme.ctk_font("body"),
                 text_color=token_pair("text"),
                 anchor="w",
@@ -257,18 +257,18 @@ class GlossaryTab(ctk.CTkFrame):
 
             trans_lbl = ctk.CTkLabel(
                 row_frame,
-                text=translation,
+                text=item["target"],
                 font=theme.ctk_font("body"),
                 text_color=token_pair("text_muted"),
                 anchor="w",
             )
             trans_lbl.pack(side="left", fill="x", padx=(0, 8), pady=(0, 0), expand=True)
 
-            # Delete button (right-aligned)
+            # Delete button (right-aligned) — uses entry id, not source_term
             del_btn = DangerGhostButton(
                 row_frame,
                 text=t("glossary_delete"),
-                command=lambda term=term: self._delete_term(term),
+                command=lambda tid=item["id"]: self._delete_term(tid),
                 height=28,
                 width=72,
             )
@@ -287,11 +287,16 @@ class GlossaryTab(ctk.CTkFrame):
 
             self._entry_rows.append(row_frame)
 
-    def _delete_term(self, term):
-        """Delete a term from the glossary."""
-        if _tk_msgbox.askyesno(t("glossary_confirm_delete"), f"{t('glossary_remove')} '{term}'?"):
+    def _delete_term(self, term_id):
+        """Delete a term from the glossary by id."""
+        try:
+            entry = [e for e in self.manager.get_all_entries() if e["id"] == term_id]
+            display_name = entry[0]["source"] if entry else f"#{term_id}"
+        except Exception:
+            display_name = f"#{term_id}"
+        if _tk_msgbox.askyesno(t("glossary_confirm_delete"), f"{t('glossary_remove')} '{display_name}'?"):
             try:
-                self.manager.delete_entry(term)
+                self.manager.delete_entry(term_id)
                 self._toast.show(t("toast_success"), t("glossary_deleted_success"), "success")
                 self._refresh_table()
             except Exception as e:

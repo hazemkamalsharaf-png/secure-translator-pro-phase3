@@ -77,23 +77,27 @@ class GlossaryManager:
         """Add a new term (no notes). Returns True on success."""
         return self.add_term(source, target, notes="")
 
-    def delete_entry(self, source_term):
-        """Delete a term by its source_term value."""
+    def delete_entry(self, term_id):
+        """Delete a term by its integer id."""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "DELETE FROM glossary WHERE source_term = ?",
-                (source_term,)
+                "DELETE FROM glossary WHERE id = ?",
+                (term_id,)
             )
             conn.commit()
         return True
 
     def get_all_entries(self):
-        """Return list of (source, target) tuples for the glossary table."""
+        """Return list of dicts with id, source, target for the glossary table."""
         entries = []
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT source_term, target_term FROM glossary ORDER BY source_term"
+                "SELECT id, source_term, target_term FROM glossary ORDER BY id"
             )
             for row in cursor:
-                entries.append((row[0], row[1]))
+                entries.append({
+                    "id": row[0],
+                    "source": row[1],
+                    "target": row[2],
+                })
         return entries

@@ -67,8 +67,22 @@ class TranslationEngine(threading.Thread):
             if not os.path.exists(self.archive_dir):
                 os.makedirs(self.archive_dir)
 
-            with open(self.input_file, 'r', encoding='utf-8') as f:
-                content = f.read()
+            # Robust file reading: try UTF-8 → UTF-8-sig (BOM) → CP1256 (Arabic Windows)
+            content = None
+            encoding_used = None
+            for enc in ("utf-8", "utf-8-sig", "cp1256"):
+                try:
+                    with open(self.input_file, 'r', encoding=enc) as f:
+                        content = f.read()
+                    encoding_used = enc
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if content is None:
+                raise UnicodeDecodeError("utf-8", b"", 0, 1,
+                    f"All encodings failed (UTF-8, UTF-8-sig, CP1256). "
+                    "The file may be binary or use an unsupported encoding.")
+            logger.info(f"File read successfully with encoding={encoding_used}")
 
             chunks = self._split_into_word_chunks(content)
             total_chunks = len(chunks)

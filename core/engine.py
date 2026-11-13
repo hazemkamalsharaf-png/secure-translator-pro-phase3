@@ -100,13 +100,14 @@ class TranslationEngine(threading.Thread):
                 tone_info = {"instruction": ""}
                 
                 # Run full pipeline with retry on validation failure
-                config = self.config_manager.get()
-                max_retries = config.get("max_retries", 2)
+                # Read max_retries from local_settings (HTTP-level retries in agents.py handle connection issues)
+                # Only allow 1 extra validation attempt per chunk to avoid multiplying with agents.py retries
+                max_retries = self.config_manager.get("local_settings", "max_retries") or 2
                 final_chunk = None
                 validated = False
                 reason = "unknown"
 
-                for attempt in range(1 + max_retries):
+                for attempt in range(2):  # 1 initial attempt + at most 1 extra validation retry
                     if self._stop_event.is_set(): break
 
                     self.progress_callback(current_idx, total_chunks,
@@ -128,7 +129,7 @@ class TranslationEngine(threading.Thread):
                     logger.warning(f"Chunk {current_idx} failed validation on attempt {attempt+1}: {reason}")
 
                 if not validated:
-                    logger.error(f"Chunk {current_idx} failed after {1 + max_retries} attempts: {reason}")
+                    logger.error(f"Chunk {current_idx} failed after all attempts: {reason}")
                     translated_parts.append(chunk)  # fallback: keep original
                     # prev_context unchanged — no bad context injected
                 elif final_chunk is not None:

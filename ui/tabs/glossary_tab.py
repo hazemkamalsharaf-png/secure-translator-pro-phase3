@@ -228,7 +228,7 @@ class GlossaryTab(ctk.CTkFrame):
         self._entry_rows.clear()
 
         entries = self.manager.get_all_entries()
-        filtered = [e for e in entries if not query or query in e[0].lower() or query in e[1].lower()]
+        filtered = [e for e in entries if not query or query in e["source"].lower() or query in e["target"].lower()]
 
         # Show/hide empty state
         if filtered:

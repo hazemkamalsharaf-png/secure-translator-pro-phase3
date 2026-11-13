@@ -92,7 +92,7 @@ class GlossaryManager:
         entries = []
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT id, source_term, target_term FROM glossary ORDER BY id"
+                "SELECT id, source_term, target_term FROM glossary ORDER BY source_term COLLATE NOCASE, id"
             )
             for row in cursor:
                 entries.append({

@@ -11,6 +11,11 @@ from core.logging_helper import AppLogger
 
 logger = AppLogger.get_instance()
 
+# ── Chunk validation constants ──────────────────────────────────────────────
+_MIN_LENGTH_RATIO = 0.30   # translated length must be ≥30% of source length
+_MIN_ARABIC_RATIO = 0.30   # Arabic output needs ≥30% Arabic letters among all alphabetic chars
+_REFUSAL_CHECK_CHARS = 120  # only inspect the first N characters for refusal phrases
+
 class TranslationEngine(threading.Thread):
     def __init__(self, input_file, output_dir, archive_dir, config_manager, 
                  progress_callback, error_callback, completion_callback=None, persona="You are an elite translator."):
@@ -89,16 +94,17 @@ class TranslationEngine(threading.Thread):
 
             logger.info(f"Starting translation: {self.input_file} ({len(content)} chars, {total_chunks} chunks)")
             agent_orchestrator = AgentOrchestrator(self.config_manager)
+            target_lang = self.config_manager.get("target_lang", None) or "ar"
 
             translated_parts = []
             prev_context = ""
 
             for idx, chunk in enumerate(chunks):
                 if self._stop_event.is_set(): break
-                
+
                 current_idx = idx + 1
                 tone_info = {"instruction": ""}
-                
+
                 # Run full pipeline with retry on validation failure
                 # Read max_retries from local_settings (HTTP-level retries in agents.py handle connection issues)
                 # Only allow 1 extra validation attempt per chunk to avoid multiplying with agents.py retries
@@ -122,7 +128,7 @@ class TranslationEngine(threading.Thread):
                         f"Chunk {current_idx}/{total_chunks}: Cultural Check{' (retry ' + str(attempt) + ')' if attempt > 0 else '...'}")
                     final_chunk = agent_orchestrator.run_cultural_expert_agent(criticized)
 
-                    is_valid, reason = self._validate_chunk(chunk, final_chunk)
+                    is_valid, reason = self._validate_chunk(chunk, final_chunk, target_lang)
                     if is_valid:
                         validated = True
                         break
@@ -184,34 +190,44 @@ class TranslationEngine(threading.Thread):
 
     # ── Chunk validation ────────────────────────────────────────────
 
-    def _validate_chunk(self, original_chunk, translated, min_length_pct=0.10):
+    def _validate_chunk(self, original_chunk, translated, target_lang=None):
         """Return (is_valid, reason) tuple.
 
         Checks for:
           1. Empty output
-          2. Output far shorter than the input (language-pair aware)
-          3. Refusal / summary-style answers
+          2. Output far shorter than the input (MIN_LENGTH_RATIO threshold)
+          3. Arabic output needs sufficient Arabic letters when target is 'ar'
+          4. Refusal/summary phrases in first 120 chars (ignoring source phrases)
         """
         if not translated or not translated.strip():
             return False, "Empty translation output"
 
-        # Language-pair-aware length check
+        # Length check
         ratio = len(translated) / len(original_chunk) if len(original_chunk) > 0 else 0
-        if ratio < min_length_pct:
-            return False, f"Output too short (length ratio {ratio:.2%} < {min_length_pct:.0%})"
+        if ratio < _MIN_LENGTH_RATIO:
+            return False, f"Output too short (length ratio {ratio:.2%} < {_MIN_LENGTH_RATIO:.0%})"
 
-        # Refusal / summary detection
-        refusal_patterns = [
-            "i apologize", "i'm sorry", "i am sorry",
-            "i can't", "i cannot", "i'm unable",
-            "as an ai", "as an assistant",
+        # Arabic letter proportion check (target language 'ar')
+        if target_lang == 'ar':
+            letters = [c for c in translated if c.isalpha()]
+            if letters:
+                arabic_letters = sum(1 for c in letters if '\u0600' <= c <= '\u06FF')
+                arabic_ratio = arabic_letters / len(letters)
+                if arabic_ratio < _MIN_ARABIC_RATIO:
+                    return False, f"Arabic letter proportion too low ({arabic_ratio:.2%} < {_MIN_ARABIC_RATIO:.0%})"
+
+        # Refusal / summary detection — only first 120 chars, skip phrases in source
+        check_text = translated[:_REFUSAL_CHECK_CHARS].lower()
+        source_lower = original_chunk.lower()
+        refusal_phrases = [
+            "i can't", "i cannot", "i'm unable", "i apologize",
+            "i'm sorry", "i am sorry", "as an ai", "as an assistant",
             "please rephrase", "please provide",
             "this document contains", "this text contains",
             "the following", "here is a summary",
         ]
-        lower = translated.lower()
-        for pattern in refusal_patterns:
-            if pattern in lower:
-                return False, f"Refusal/summary pattern detected ('{pattern}')"
+        for phrase in refusal_phrases:
+            if phrase in check_text and phrase not in source_lower:
+                return False, f"Refusal/summary pattern detected ('{phrase}')"
 
         return True, ""

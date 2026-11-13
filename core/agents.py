@@ -90,17 +90,20 @@ class AgentOrchestrator:
         api_key = settings.get("api_key")
         if not api_key:
             raise RuntimeError("Cloud API Key is missing in Settings.")
-        
+
         try:
-            logger.debug(f"Cloud LLM request (provider={settings.get('provider', 'unknown')})")
+            provider = settings.get("provider", "gemini")
+            logger.debug(f"Cloud LLM request (provider={provider})")
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash')
+            # Read model_name from cloud_settings with a sensible default
+            model_name = settings.get("model_name", "gemini-1.5-flash")
+            model = genai.GenerativeModel(model_name)
             full_prompt = f"{system_prompt}\n\n{user_prompt}"
             response = model.generate_content(full_prompt)
-            logger.info("Cloud LLM response received")
+            logger.info(f"Cloud LLM response received (model={model_name})")
             return response.text.strip()
         except Exception as e:
-            raise RuntimeError(f"Gemini API Error: {str(e)}")
+            raise RuntimeError(f"Gemini API Error (model={settings.get('model_name', 'gemini-1.5-flash')}): {str(e)}")
 
     def run_drafting_agent(self, text, context, glossary_rules, tone_info, custom_persona):
         system_prompt = (

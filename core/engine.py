@@ -86,7 +86,7 @@ class TranslationEngine(threading.Thread):
 
             chunks = self._split_into_word_chunks(content)
             total_chunks = len(chunks)
-            
+
             logger.info(f"Starting translation: {self.input_file} ({len(content)} chars, {total_chunks} chunks)")
             agent_orchestrator = AgentOrchestrator(self.config_manager)
 
@@ -97,21 +97,45 @@ class TranslationEngine(threading.Thread):
                 if self._stop_event.is_set(): break
                 
                 current_idx = idx + 1
-                tone_info = {"instruction": ""} 
+                tone_info = {"instruction": ""}
                 
-                self.progress_callback(current_idx, total_chunks, f"Chunk {current_idx}/{total_chunks}: Drafting...")
-                draft = agent_orchestrator.run_drafting_agent(chunk, prev_context, glossary_rules, tone_info, self.persona)
+                # Run full pipeline with retry on validation failure
+                config = self.config_manager.get()
+                max_retries = config.get("max_retries", 2)
+                final_chunk = None
+                validated = False
+                reason = "unknown"
 
-                self.progress_callback(current_idx, total_chunks, f"Chunk {current_idx}/{total_chunks}: Critiquing...")
-                criticized = agent_orchestrator.run_critic_agent(draft)
+                for attempt in range(1 + max_retries):
+                    if self._stop_event.is_set(): break
 
-                self.progress_callback(current_idx, total_chunks, f"Chunk {current_idx}/{total_chunks}: Cultural Check...")
-                final_chunk = agent_orchestrator.run_cultural_expert_agent(criticized)
+                    self.progress_callback(current_idx, total_chunks,
+                        f"Chunk {current_idx}/{total_chunks}: Drafting{' (retry ' + str(attempt) + ')' if attempt > 0 else '...'}")
+                    draft = agent_orchestrator.run_drafting_agent(chunk, prev_context, glossary_rules, tone_info, self.persona)
 
-                translated_parts.append(final_chunk)
-                
-                sentences = re.split(r'(?<=[.!?])\s+', chunk)
-                prev_context = " ".join(sentences[-2:]) if len(sentences) > 1 else ""
+                    self.progress_callback(current_idx, total_chunks,
+                        f"Chunk {current_idx}/{total_chunks}: Critiquing{' (retry ' + str(attempt) + ')' if attempt > 0 else '...'}")
+                    criticized = agent_orchestrator.run_critic_agent(draft)
+
+                    self.progress_callback(current_idx, total_chunks,
+                        f"Chunk {current_idx}/{total_chunks}: Cultural Check{' (retry ' + str(attempt) + ')' if attempt > 0 else '...'}")
+                    final_chunk = agent_orchestrator.run_cultural_expert_agent(criticized)
+
+                    is_valid, reason = self._validate_chunk(chunk, final_chunk)
+                    if is_valid:
+                        validated = True
+                        break
+                    logger.warning(f"Chunk {current_idx} failed validation on attempt {attempt+1}: {reason}")
+
+                if not validated:
+                    logger.error(f"Chunk {current_idx} failed after {1 + max_retries} attempts: {reason}")
+                    translated_parts.append(chunk)  # fallback: keep original
+                    # prev_context unchanged — no bad context injected
+                elif final_chunk is not None:
+                    translated_parts.append(final_chunk)
+                    # Only update prev_context with successful translations
+                    sentences = re.split(r'(?<=[.!?])\s+', final_chunk)
+                    prev_context = " ".join(sentences[-2:]) if len(sentences) > 1 else ""
 
             if not self._stop_event.is_set():
                 # 1. Calculate new path: Force .docx extension
@@ -156,3 +180,37 @@ class TranslationEngine(threading.Thread):
 
     def stop(self):
         self._stop_event.set()
+
+    # ── Chunk validation ────────────────────────────────────────────
+
+    def _validate_chunk(self, original_chunk, translated, min_length_pct=0.10):
+        """Return (is_valid, reason) tuple.
+
+        Checks for:
+          1. Empty output
+          2. Output far shorter than the input (language-pair aware)
+          3. Refusal / summary-style answers
+        """
+        if not translated or not translated.strip():
+            return False, "Empty translation output"
+
+        # Language-pair-aware length check
+        ratio = len(translated) / len(original_chunk) if len(original_chunk) > 0 else 0
+        if ratio < min_length_pct:
+            return False, f"Output too short (length ratio {ratio:.2%} < {min_length_pct:.0%})"
+
+        # Refusal / summary detection
+        refusal_patterns = [
+            "i apologize", "i'm sorry", "i am sorry",
+            "i can't", "i cannot", "i'm unable",
+            "as an ai", "as an assistant",
+            "please rephrase", "please provide",
+            "this document contains", "this text contains",
+            "the following", "here is a summary",
+        ]
+        lower = translated.lower()
+        for pattern in refusal_patterns:
+            if pattern in lower:
+                return False, f"Refusal/summary pattern detected ('{pattern}')"
+
+        return True, ""

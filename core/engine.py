@@ -98,6 +98,7 @@ class TranslationEngine(threading.Thread):
 
             translated_parts = []
             prev_context = ""
+            failed_chunk_count = 0
 
             for idx, chunk in enumerate(chunks):
                 if self._stop_event.is_set(): break
@@ -135,8 +136,13 @@ class TranslationEngine(threading.Thread):
                     logger.warning(f"Chunk {current_idx} failed validation on attempt {attempt+1}: {reason}")
 
                 if not validated:
+                    failed_chunk_count += 1
                     logger.error(f"Chunk {current_idx} failed after all attempts: {reason}")
-                    translated_parts.append(chunk)  # fallback: keep original
+                    # Insert visible marker before the original text
+                    marker = f"[UNTRANSLATED CHUNK {current_idx}]"
+                    translated_parts.append(f"{marker} {chunk}")
+                    self.progress_callback(current_idx, total_chunks,
+                        f"⚠️ Chunk {current_idx}: validation failed after all attempts ({reason})")
                     # prev_context unchanged — no bad context injected
                 elif final_chunk is not None:
                     translated_parts.append(final_chunk)
@@ -166,8 +172,13 @@ class TranslationEngine(threading.Thread):
                 # 4. Terminal Logging (Absolute Path)
                 logger.info(f"Translation successful: {output_filename} ({len(translated_parts)} chunks)")
                 print(f"✅ Translation successful! File saved to: {output_path}")
+                if failed_chunk_count > 0:
+                    logger.warning(f"Translation completed with {failed_chunk_count} failed chunk(s)")
 
                 # 5. UI Notification via callbacks
+                if failed_chunk_count > 0:
+                    self.progress_callback(total_chunks, total_chunks,
+                        f"⚠️ Complete! {failed_chunk_count} chunk(s) could not be translated")
                 self.progress_callback(total_chunks, total_chunks, f"✅ Complete! Saved as {os.path.basename(output_path)}")
                 
                 if self.completion_callback:

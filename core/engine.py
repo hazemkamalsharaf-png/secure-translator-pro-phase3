@@ -12,9 +12,10 @@ from core.logging_helper import AppLogger
 logger = AppLogger.get_instance()
 
 # ── Chunk validation constants ──────────────────────────────────────────────
-_MIN_LENGTH_RATIO = 0.30   # translated length must be ≥30% of source length
-_MIN_ARABIC_RATIO = 0.30   # Arabic output needs ≥30% Arabic letters among all alphabetic chars
-_REFUSAL_CHECK_CHARS = 120  # only inspect the first N characters for refusal phrases
+_MIN_LENGTH_RATIO = 0.30          # translated length must be ≥30% of source length
+_MIN_ARABIC_RATIO = 0.30          # Arabic output needs ≥30% Arabic letters among all alphabetic chars
+_REFUSAL_CHECK_CHARS = 120        # only inspect the first N characters for refusal phrases
+_MAX_VALIDATION_ATTEMPTS = 2      # 1 initial + 1 extra validation retry (HTTP retries are in agents.py)
 
 class TranslationEngine(threading.Thread):
     def __init__(self, input_file, output_dir, archive_dir, config_manager, 
@@ -42,7 +43,7 @@ class TranslationEngine(threading.Thread):
             if current_word_count >= words_per_chunk:
                 last_punctuation_idx = -1
                 for i in range(len(current_chunk_words) - 1, -1, -1):
-                    if re.search(r'[.!?]', current_chunk_words[i]):
+                    if re.search(r'[.!?؟؛…]', current_chunk_words[i]):
                         last_punctuation_idx = i
                         break
                 if last_punctuation_idx != -1:
@@ -101,7 +102,7 @@ class TranslationEngine(threading.Thread):
 
             logger.info(f"Starting translation: {self.input_file} ({len(content)} chars, {total_chunks} chunks)")
             agent_orchestrator = AgentOrchestrator(self.config_manager)
-            target_lang = self.config_manager.get("target_lang", None) or "ar"
+            target_lang = self.config_manager.get("target_lang") or "ar"
 
             translated_parts = []
             prev_context = ""
@@ -116,12 +117,12 @@ class TranslationEngine(threading.Thread):
                 # Run full pipeline with retry on validation failure
                 # Read max_retries from local_settings (HTTP-level retries in agents.py handle connection issues)
                 # Only allow 1 extra validation attempt per chunk to avoid multiplying with agents.py retries
-                max_retries = self.config_manager.get("local_settings", "max_retries") or 2
+                max_retries = self.config_manager.get("local_settings", "max_retries") or 2  # default 2 from config
                 final_chunk = None
                 validated = False
                 reason = "unknown"
 
-                for attempt in range(2):  # 1 initial attempt + at most 1 extra validation retry
+                for attempt in range(_MAX_VALIDATION_ATTEMPTS):  # 1 initial + up to 1 extra validation retry
                     if self._stop_event.is_set(): break
 
                     self.progress_callback(current_idx, total_chunks,
@@ -200,7 +201,8 @@ class TranslationEngine(threading.Thread):
                 archive_base = self.archive_dir if os.path.isabs(self.archive_dir) else os.path.join(data_dir(), "archived")
                 if not os.path.exists(archive_base): os.makedirs(archive_base)
                 shutil.move(self.input_file, os.path.join(archive_base, f"ERROR_{os.path.basename(self.input_file)}"))
-            except: pass
+            except (PermissionError, FileNotFoundError, OSError) as archive_err:
+                logger.warning(f"Could not archive error file: {archive_err}")
             self.error_callback(f"Engine Error: {error_msg}")
 
     def stop(self):

@@ -147,7 +147,7 @@ class TranslationEngine(threading.Thread):
                 elif final_chunk is not None:
                     translated_parts.append(final_chunk)
                     # Only update prev_context with successful translations
-                    sentences = re.split(r'(?<=[.!?])\s+', final_chunk)
+                    sentences = re.split(r'(?<=[.!?؟؛])\s+', final_chunk)
                     prev_context = " ".join(sentences[-2:]) if len(sentences) > 1 else ""
 
             if not self._stop_event.is_set():

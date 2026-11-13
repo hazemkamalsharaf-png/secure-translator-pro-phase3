@@ -27,9 +27,9 @@ logs/
 *.log
 
 # Data files that might be large or user-specific
-data/*.db
-data/config.json
-data/logs/
+**/data/config.json
+**/data/*.db
+**/data/logs/
 
 # Generated icons (regenerate if needed)
 data/assets/icons/*.png

@@ -42,6 +42,8 @@ class Card(ctk.CTkFrame):
             self._title_frame = ctk.CTkFrame(
                 self, fg_color="transparent", corner_radius=0
             )
+            self._title_frame.grid_columnconfigure(0, weight=1)
+
             self._title_label = ctk.CTkLabel(
                 self._title_frame,
                 text=title,
@@ -58,7 +60,7 @@ class Card(ctk.CTkFrame):
                 fg_color=token_pair("border_light"),
                 corner_radius=0,
             )
-            self._title_line.grid(row=1, column=0, sticky="ew", padx=_pad)
+            self._title_line.grid(row=1, column=0, columnspan=2, sticky="ew", padx=_pad)
 
             # Pack title frame at top of card
             self._title_frame.pack(fill="x")
@@ -75,7 +77,7 @@ class Card(ctk.CTkFrame):
         """Add a small action button to the right of the title."""
         if not hasattr(self, '_actions'):
             self._actions = ctk.CTkFrame(self._title_frame, fg_color="transparent")
-            self._actions.grid(row=0, column=1, padx=_pad, pady=_pad, sticky="e")
+            self._actions.grid(row=0, column=1, padx=self._padding, pady=self._padding, sticky="e")
         btn = ctk.CTkButton(
             self._actions,
             text=text,

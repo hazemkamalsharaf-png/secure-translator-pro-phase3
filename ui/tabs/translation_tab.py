@@ -235,9 +235,9 @@ class TranslationTab(ctk.CTkFrame):
             self._toast.show(t("toast_warning"), t("trans_select_file_hint"), "warning")
             return
 
-        # Resolve output/archive directories robustly via data_path helper
-        output_dir = data_path("translated")
-        archive_dir = data_path("archived")
+        # Respect user-configured output & archive directories from Settings, fallback to data_path
+        output_dir = (self.config_manager.get("output_dir") or "").strip() or data_path("translated")
+        archive_dir = (self.config_manager.get("archive_dir") or "").strip() or data_path("archived")
 
         self._is_running = True
         self.btn_start.configure(state="disabled", text=t("trans_status_running"))
@@ -245,19 +245,11 @@ class TranslationTab(ctk.CTkFrame):
         self.progress_bar.set(0)
         self.progress_text.configure(text="0 / 0")
 
-        config_manager = self.config_manager
-        engine_mode = config_manager.get("engine_mode")
-
-        if engine_mode == "local":
-            api_settings = config_manager.get("local_settings")
-        else:
-            api_settings = config_manager.get("cloud_settings")
-
         self._engine = TranslationEngine(
             input_file=input_file,
             output_dir=output_dir,
             archive_dir=archive_dir,
-            config_manager=config_manager,
+            config_manager=self.config_manager,
             progress_callback=self._update_ui_progress,
             error_callback=self._handle_engine_error,
             completion_callback=self._on_translation_complete,
@@ -288,6 +280,8 @@ class TranslationTab(ctk.CTkFrame):
         self.progress_bar.set(1)
         self.progress_text.configure(text=t("trans_status_success"))
         self.progress_card.set_title(t("trans_status_success"))
+        if file_path:
+            self.file_info_label.configure(text=f"Saved: {file_path}")
 
         # Show success toast
         self._toast.show(t("toast_success"), t("trans_success_msg"), "success")
@@ -312,3 +306,4 @@ class TranslationTab(ctk.CTkFrame):
         self.btn_cancel.configure(state="disabled")
         self.progress_text.configure(text=error_msg)
         self.progress_card.set_title(t("trans_status_error"))
+        self._toast.show(t("toast_error"), error_msg, "error")

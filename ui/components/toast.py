@@ -39,7 +39,7 @@ class Toast:
     """
 
     TOAST_WIDTH = 360
-    TOAST_HEIGHT = 64
+    TOAST_HEIGHT = 68
     MARGIN_RIGHT = 16
     MARGIN_TOP = 16
     STACK_GAP = 8
@@ -81,7 +81,10 @@ class Toast:
         top = ctk.CTkToplevel(self.master)
         top.overrideredirect(True)
         top.attributes("-topmost", True)
-        top.attributes("-alpha", 0.0)
+        try:
+            top.attributes("-alpha", 0.0)
+        except Exception:
+            pass
         top.geometry(f"{self.TOAST_WIDTH}x{self.TOAST_HEIGHT}+{x}+{y}")
 
         # Build content
@@ -91,32 +94,33 @@ class Toast:
         )
         frame.pack(fill="both", expand=True, padx=2, pady=2)
 
-        # Title
+        # Header row: Title + Close button
+        header_row = ctk.CTkFrame(frame, fg_color="transparent")
+        header_row.pack(side="top", fill="x", padx=14, pady=(8, 0))
+
         lbl_title = ctk.CTkLabel(
-            frame, text=title,
+            header_row, text=title,
             font=ctk.CTkFont(size=13, weight="bold"),
             text_color=fg_col, anchor="w",
         )
-        lbl_title.pack(side="top", padx=14, pady=(8, 0), anchor="w", fill="x")
+        lbl_title.pack(side="left", fill="x", expand=True)
+
+        btn_close = ctk.CTkButton(
+            header_row, text=_CLOSE_ICON, width=22, height=22, corner_radius=6,
+            fg_color="transparent", hover_color=bg_col,
+            text_color=token_pair("text_muted"),
+            command=lambda: self._dismiss(top),
+        )
+        btn_close.pack(side="right")
 
         # Message
         lbl_msg = ctk.CTkLabel(
             frame, text=message, font=ctk.CTkFont(size=11),
             text_color=token_pair("text_muted"), anchor="w",
-            wraplength=self.TOAST_WIDTH - 60,
+            wraplength=self.TOAST_WIDTH - 48,
         )
-        lbl_msg.pack(side="top", padx=14, pady=(0, 8), anchor="w", fill="x")
+        lbl_msg.pack(side="top", padx=14, pady=(2, 8), anchor="w", fill="x")
 
-        # Close button
-        btn_close = ctk.CTkButton(
-            frame, text=_CLOSE_ICON, width=22, height=22, corner_radius=6,
-            fg_color="transparent", hover_color=bg_col,
-            text_color=token_pair("text_muted"),
-            command=lambda: self._dismiss(top),
-        )
-        btn_close.pack(side="right", padx=10, pady=6)
-
-        top.configure(window=frame)
         self._toasts.append((top, None))
 
         # Animate in (fade)
@@ -126,18 +130,25 @@ class Toast:
         top.after(duration, lambda: self._dismiss(top))
 
     def _animate_in(self, widget, start, end, step):
+        if not widget.winfo_exists():
+            return
         current = start
         if current >= end:
             return
-        widget.attributes("-alpha", current + step)
+        try:
+            widget.attributes("-alpha", current + step)
+        except Exception:
+            return
         widget.after(15, lambda: self._animate_in(widget, current + step, end, step))
 
     def _dismiss(self, top):
         if top.winfo_exists():
             # Remove from list
             self._toasts = [(t, d) for t, d in self._toasts if t is not top]
-            # Animate out then destroy
-            top.attributes("-alpha", 0.0)
+            try:
+                top.attributes("-alpha", 0.0)
+            except Exception:
+                pass
             top.after(200, lambda: top.destroy() if top.winfo_exists() else None)
 
     def _cleanup_idle_toasts(self):

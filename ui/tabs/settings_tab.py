@@ -30,6 +30,11 @@ DEFAULT_LOCAL = {
     "max_retries": 2,
 }
 CLOUD_PROVIDERS = ["gemini"]
+CLOUD_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-2.5-pro",
+    "gemini-2.0-flash",
+]
 
 
 def _tr(key, default):
@@ -315,6 +320,23 @@ class SettingsTab(ctk.CTkFrame):
         )
         self._make_row(card, _tr("settings_provider", "Provider") + ":", provider_combo)
 
+        cloud_model = cloud.get("model_name") or CLOUD_MODELS[0]
+        self.cloud_model_var = ctk.StringVar(value=cloud_model)
+        cloud_models = list(CLOUD_MODELS)
+        if cloud_model not in cloud_models:
+            cloud_models.insert(0, cloud_model)
+        self.cloud_model_combo = ctk.CTkComboBox(
+            card.body_frame,
+            values=cloud_models,
+            variable=self.cloud_model_var,
+            font=theme.ctk_font("body"),
+            height=36,
+            corner_radius=theme.radius("sm"),
+            border_width=1,
+            **combo_style(),
+        )
+        self._make_row(card, _tr("settings_model_name", "Model name") + ":", self.cloud_model_combo)
+
         self.api_key_var = ctk.StringVar(value=cloud.get("api_key") or "")
         api_box = ctk.CTkFrame(card.body_frame, fg_color="transparent")
         self.api_entry = self._make_entry(
@@ -451,6 +473,7 @@ class SettingsTab(ctk.CTkFrame):
         if not isinstance(cloud, dict):
             cloud = {}
         cloud["provider"] = self.provider_var.get().strip() or CLOUD_PROVIDERS[0]
+        cloud["model_name"] = self.cloud_model_var.get().strip() or CLOUD_MODELS[0]
         cloud["api_key"] = self.api_key_var.get()
         cfg["cloud_settings"] = cloud
 
@@ -479,6 +502,9 @@ class SettingsTab(ctk.CTkFrame):
         if "engine_mode" in cfg:
             self.engine_mode_var.set(cfg["engine_mode"])
 
+        self.out_dir_var.set(cfg.get("output_dir") or data_path("translated"))
+        self.archive_dir_var.set(cfg.get("archive_dir") or data_path("archived"))
+
         local = cfg.get("local_settings") if isinstance(cfg.get("local_settings"), dict) else {}
         self.model_name_var.set(local.get("model_name", DEFAULT_LOCAL["model_name"]))
         self.base_url_var.set(local.get("base_url", DEFAULT_LOCAL["base_url"]))
@@ -487,5 +513,6 @@ class SettingsTab(ctk.CTkFrame):
 
         cloud = cfg.get("cloud_settings") if isinstance(cfg.get("cloud_settings"), dict) else {}
         self.provider_var.set(cloud.get("provider") or CLOUD_PROVIDERS[0])
+        self.cloud_model_var.set(cloud.get("model_name") or CLOUD_MODELS[0])
         self.api_key_var.set(cloud.get("api_key", ""))
         self._update_engine_state()

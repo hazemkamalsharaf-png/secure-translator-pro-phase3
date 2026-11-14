@@ -33,3 +33,6 @@ logs/
 
 # Generated icons (regenerate if needed)
 data/assets/icons/*.png
+
+# Legacy duplicate directory (use root project files)
+secure_translator_pro/

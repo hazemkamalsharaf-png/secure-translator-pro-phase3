@@ -2,18 +2,19 @@
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('data', 'data')]
+datas = [('E:/secure_translator_pro_backup_phase3/data', 'data')]
 binaries = []
 hiddenimports = []
 hiddenimports += collect_submodules('ui')
 hiddenimports += collect_submodules('core')
+hiddenimports += collect_submodules('data')
 tmp_ret = collect_all('customtkinter')
 datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['main.py'],
-    pathex=[],
+    ['E:/secure_translator_pro_backup_phase3/main.py'],
+    pathex=['E:/secure_translator_pro_backup_phase3'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

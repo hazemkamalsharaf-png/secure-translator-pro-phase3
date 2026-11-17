@@ -6,17 +6,19 @@ from datetime import datetime
 from docx import Document
 from docx.oxml import OxmlElement
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from core.agents import AgentOrchestrator
+from core.agents import AgentOrchestrator, OutputTruncatedError
+from core.text_utils import (
+    build_style_sample, validate_chunk, chunk_hash, load_progress, append_progress,
+)
 from data.database import GlossaryManager
 from core.logging_helper import AppLogger
 
 logger = AppLogger.get_instance()
 
-# ── Chunk validation constants ──────────────────────────────────────────────
-_MIN_LENGTH_RATIO = 0.30          # translated length must be ≥30% of source length
-_MIN_ARABIC_RATIO = 0.30          # Arabic output needs ≥30% Arabic letters among all alphabetic chars
-_REFUSAL_CHECK_CHARS = 120        # only inspect the first N characters for refusal phrases
-_MAX_VALIDATION_ATTEMPTS = 2      # 1 initial + 1 extra validation retry (HTTP retries are in agents.py)
+# ── Run constants ───────────────────────────────────────────────────────────
+_MAX_ATTEMPTS = 3            # full 3-agent attempts per chunk (temperature is raised on each retry)
+_RETRY_TEMP_STEP = 0.15      # temperature added per retry
+_MAX_SPLIT_DEPTH = 3         # a failing chunk is split in half up to this many times
 
 
 def _apply_rtl_to_paragraph(paragraph):
@@ -43,6 +45,12 @@ def _filter_glossary_for_chunk(glossary_manager, all_terms, chunk_text):
     if not matched:
         return ""
     return glossary_manager.format_for_prompt(matched)
+
+
+def _tail_context(text):
+    """Last two sentences of a translated chunk, used as continuity context for the next chunk."""
+    sentences = re.split(r'(?<=[.!?؟؛])\s+', text)
+    return " ".join(sentences[-2:]) if len(sentences) > 1 else text[-300:]
 
 
 class TranslationEngine(threading.Thread):
@@ -129,6 +137,133 @@ class TranslationEngine(threading.Thread):
 
         return chunks
 
+    # ── Chunk translation with retry → split fallback ───────────────────────
+    def _split_in_half(self, chunk):
+        """Split a chunk into two smaller pieces (at a paragraph boundary, else a sentence boundary)."""
+        paras = [p for p in chunk.split("\n\n") if p.strip()]
+        if len(paras) >= 2:
+            total = sum(len(p.split()) for p in paras)
+            acc = 0
+            for i, para in enumerate(paras[:-1]):
+                acc += len(para.split())
+                if acc >= total / 2:
+                    return ["\n\n".join(paras[:i + 1]), "\n\n".join(paras[i + 1:])]
+            return ["\n\n".join(paras[:-1]), paras[-1]]
+        words = chunk.split()
+        if len(words) < 40:
+            return None
+        parts = self._split_long_paragraph(chunk, words_per_chunk=max(20, len(words) // 2))
+        return parts if len(parts) >= 2 else None
+
+    def _dump_debug(self, out_dir, base_name, label, attempt, text, debug_files):
+        """Save what the model produced on a failed attempt (only when there is something to save)."""
+        if not text:
+            return
+        try:
+            path = os.path.join(out_dir, f"{base_name}.debug.chunk{label}.attempt{attempt}.txt")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text)
+            debug_files.append(path)
+        except OSError:
+            pass
+
+    def _translate_chunk(self, agent, chunk, label, total_chunks, progress_idx, prev_context,
+                         glossary_manager, all_terms, tone_info, target_lang,
+                         out_dir, base_name, debug_files, depth=0):
+        """Translate one chunk. Returns (text, "") on success or (None, reason) on failure.
+
+        Strategy: up to _MAX_ATTEMPTS full passes (temperature raised on each retry); if all fail, split the
+        chunk in half and translate each half the same way (recursively). Nothing is ever skipped.
+        """
+        glossary_rules = _filter_glossary_for_chunk(glossary_manager, all_terms, chunk)
+        reason = "unknown"
+
+        for attempt in range(_MAX_ATTEMPTS):
+            if self._stop_event.is_set():
+                return None, "stopped"
+            agent.temperature_offset = _RETRY_TEMP_STEP * attempt
+            suffix = f" (retry {attempt})" if attempt > 0 else "..."
+            prefix = f"Chunk {label}/{total_chunks}"
+            try:
+                self.progress_callback(progress_idx, total_chunks, f"{prefix}: Drafting{suffix}")
+                draft = agent.run_drafting_agent(chunk, prev_context, glossary_rules, tone_info, self.persona)
+                if self._stop_event.is_set():
+                    return None, "stopped"
+
+                self.progress_callback(progress_idx, total_chunks, f"{prefix}: Critiquing & Verifying{suffix}")
+                criticized = agent.run_critic_agent(
+                    draft, source_text=chunk, glossary_rules=glossary_rules, tone_info=tone_info)
+                if self._stop_event.is_set():
+                    return None, "stopped"
+
+                self.progress_callback(progress_idx, total_chunks, f"{prefix}: Cultural & Voice Polish{suffix}")
+                final = agent.run_cultural_expert_agent(
+                    criticized, source_text=chunk, glossary_rules=glossary_rules, tone_info=tone_info)
+            except OutputTruncatedError as e:
+                reason = f"Output truncated: {e}"
+                logger.warning(f"Chunk {label} attempt {attempt + 1}: {reason}")
+                self._dump_debug(out_dir, base_name, label, attempt + 1, getattr(e, "partial", ""), debug_files)
+                continue
+            except RuntimeError as e:
+                # timeouts / connection loss / refusals that already used their HTTP retries
+                reason = str(e)
+                logger.warning(f"Chunk {label} attempt {attempt + 1}: {reason}")
+                continue
+
+            ok, reason = self._validate_chunk(chunk, final, target_lang)
+            if ok:
+                agent.temperature_offset = 0.0
+                return final, ""
+            # Stage-level recovery: an earlier stage may be valid even if the last one is not
+            for name, candidate in (("Critic", criticized), ("Draft", draft)):
+                if self._validate_chunk(chunk, candidate, target_lang)[0]:
+                    logger.info(f"Chunk {label}: recovered valid output from {name} stage")
+                    agent.temperature_offset = 0.0
+                    return candidate, ""
+            logger.warning(f"Chunk {label} failed validation on attempt {attempt + 1}: {reason}")
+            self._dump_debug(out_dir, base_name, label, attempt + 1, final, debug_files)
+
+        agent.temperature_offset = 0.0
+
+        # All full attempts failed → translate it in smaller pieces
+        if depth < _MAX_SPLIT_DEPTH:
+            halves = self._split_in_half(chunk)
+            if halves:
+                logger.warning(f"Chunk {label}: splitting into {len(halves)} parts after failure ({reason})")
+                self.progress_callback(
+                    progress_idx, total_chunks,
+                    f"Chunk {label}/{total_chunks}: failed ({reason[:80]}) — retrying in smaller parts")
+                texts = []
+                ctx = prev_context
+                for n, half in enumerate(halves, 1):
+                    text, sub_reason = self._translate_chunk(
+                        agent, half, f"{label}.{n}", total_chunks, progress_idx, ctx,
+                        glossary_manager, all_terms, tone_info, target_lang,
+                        out_dir, base_name, debug_files, depth + 1)
+                    if text is None:
+                        return None, sub_reason
+                    texts.append(text)
+                    ctx = _tail_context(text)
+                return "\n\n".join(texts), ""
+        return None, reason
+
+    # ── Output ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _write_docx(parts, output_path, is_rtl):
+        """Write translated parts to a Word document (paragraphs preserved, RTL for Arabic)."""
+        doc = Document()
+        for part in parts:
+            for para_line in part.splitlines():
+                cleaned = para_line.strip()
+                if not cleaned:
+                    continue
+                p = doc.add_paragraph(cleaned)
+                if cleaned == "* * *":
+                    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                elif is_rtl:
+                    _apply_rtl_to_paragraph(p)
+        doc.save(output_path)
+
     def run(self):
         agent_orchestrator = None
         try:
@@ -178,162 +313,135 @@ class TranslationEngine(threading.Thread):
 
             logger.info(f"Starting translation: {self.input_file} ({len(content)} chars, {total_chunks} chunks)")
             agent_orchestrator = AgentOrchestrator(self.config_manager)
+            src_lang = (self.config_manager.get("source_lang") or "en").strip().lower()
             target_lang = (self.config_manager.get("target_lang") or "ar").strip().lower()
+            is_rtl = (target_lang == "ar")
 
-            # ── Stage 0: Run Style & Voice Profiler ONCE on the opening sample ──
+            # ── Output / progress locations ─────────────────────────────────
+            target_out_dir = self.output_dir if self.output_dir else os.path.dirname(self.input_file)
+            os.makedirs(target_out_dir, exist_ok=True)
+            base_name, _ = os.path.splitext(os.path.basename(self.input_file))
+            output_path = os.path.abspath(os.path.join(target_out_dir, f"{base_name}_translated.docx"))
+            partial_path = os.path.abspath(os.path.join(target_out_dir, f"{base_name}_PARTIAL.docx"))
+            progress_path = os.path.join(target_out_dir, f"{base_name}.progress.jsonl")
+
+            # Progress from an earlier interrupted run of the same file (chunks are matched by hash,
+            # so a changed source simply re-translates the changed chunks).
+            done = load_progress(progress_path)
+            resumed = sum(1 for i, c in enumerate(chunks)
+                          if done.get(i, {}).get("validated") and done[i].get("hash") == chunk_hash(c))
+            if resumed:
+                logger.info(f"Resuming: {resumed}/{total_chunks} chunks already translated")
+
+            # ── Stage 0: Style & Voice Profiler (ONCE; reused on resume for consistency) ──
             tone_info = {"instruction": ""}
             if not self._stop_event.is_set():
-                try:
-                    self.progress_callback(0, total_chunks, "Analyzing document style & narrative voice...")
-                    style_blueprint = agent_orchestrator.run_style_profiler_agent(content[:1800], self.persona)
-                    tone_info = {"instruction": style_blueprint}
-                except Exception as style_err:
-                    logger.warning(f"Style profiler skipped (continuing with default persona): {style_err}")
+                style_sample = build_style_sample(content)
+                saved_style = done.get(-1)
+                if saved_style and saved_style.get("hash") == chunk_hash(style_sample):
+                    tone_info = {"instruction": saved_style["text"]}
+                else:
+                    try:
+                        self.progress_callback(0, total_chunks, "Analyzing document style & narrative voice...")
+                        style_blueprint = agent_orchestrator.run_style_profiler_agent(style_sample, self.persona)
+                        tone_info = {"instruction": style_blueprint}
+                        append_progress(progress_path, -1, style_sample, style_blueprint, True)
+                    except Exception as style_err:
+                        logger.warning(f"Style profiler skipped (continuing with default persona): {style_err}")
 
             translated_parts = []
             prev_context = ""
-            failed_chunk_count = 0
+            debug_files = []
+            ok_count = 0
+            failure = None          # (chunk number, reason) when a chunk cannot be translated
+            current_idx = 0
 
             for idx, chunk in enumerate(chunks):
                 if self._stop_event.is_set():
                     break
 
                 current_idx = idx + 1
-                # Smart per-chunk glossary filtering (only inject terms present in this chunk)
-                chunk_glossary_rules = _filter_glossary_for_chunk(glossary_manager, all_terms, chunk)
 
-                final_chunk = None
-                validated = False
-                reason = "unknown"
+                # Already translated in an earlier run → reuse
+                rec = done.get(idx)
+                if rec and rec.get("validated") and rec.get("hash") == chunk_hash(chunk):
+                    translated_parts.append(rec["text"])
+                    prev_context = _tail_context(rec["text"])
+                    ok_count += 1
+                    self.progress_callback(current_idx, total_chunks,
+                                           f"Chunk {current_idx}/{total_chunks}: reused from previous run")
+                    continue
 
-                for attempt in range(_MAX_VALIDATION_ATTEMPTS):
-                    if self._stop_event.is_set():
-                        break
+                text, reason = self._translate_chunk(
+                    agent_orchestrator, chunk, str(current_idx), total_chunks, current_idx, prev_context,
+                    glossary_manager, all_terms, tone_info, target_lang,
+                    target_out_dir, base_name, debug_files)
 
-                    retry_suffix = f" (retry {attempt})" if attempt > 0 else "..."
-
-                    self.progress_callback(
-                        current_idx, total_chunks,
-                        f"Chunk {current_idx}/{total_chunks}: Drafting{retry_suffix}"
-                    )
-                    draft = agent_orchestrator.run_drafting_agent(
-                        chunk, prev_context, chunk_glossary_rules, tone_info, self.persona
-                    )
-                    if self._stop_event.is_set():
-                        break
-
-                    self.progress_callback(
-                        current_idx, total_chunks,
-                        f"Chunk {current_idx}/{total_chunks}: Critiquing & Verifying{retry_suffix}"
-                    )
-                    criticized = agent_orchestrator.run_critic_agent(
-                        draft, source_text=chunk, glossary_rules=chunk_glossary_rules, tone_info=tone_info
-                    )
-                    if self._stop_event.is_set():
-                        break
-
-                    self.progress_callback(
-                        current_idx, total_chunks,
-                        f"Chunk {current_idx}/{total_chunks}: Cultural & Voice Polish{retry_suffix}"
-                    )
-                    final_chunk = agent_orchestrator.run_cultural_expert_agent(
-                        criticized, source_text=chunk, glossary_rules=chunk_glossary_rules, tone_info=tone_info
-                    )
-
-                    is_valid, reason = self._validate_chunk(chunk, final_chunk, target_lang)
-                    if is_valid:
-                        validated = True
-                        break
-
-                    # Smart stage-level recovery: if Agent 3 failed validation but Agent 2 or Agent 1 is valid,
-                    # recover immediately without wasting another 3-agent round-trip!
-                    crit_valid, _ = self._validate_chunk(chunk, criticized, target_lang)
-                    if crit_valid:
-                        logger.info(f"Chunk {current_idx}: recovered valid output from Critic stage")
-                        final_chunk = criticized
-                        validated = True
-                        break
-
-                    draft_valid, _ = self._validate_chunk(chunk, draft, target_lang)
-                    if draft_valid:
-                        logger.info(f"Chunk {current_idx}: recovered valid output from Draft stage")
-                        final_chunk = draft
-                        validated = True
-                        break
-
-                    logger.warning(f"Chunk {current_idx} failed validation on attempt {attempt + 1}: {reason}")
+                # A chunk that finished and validated is always kept, even if Stop was pressed meanwhile
+                if text is not None:
+                    ok_count += 1
+                    translated_parts.append(text)
+                    append_progress(progress_path, idx, chunk, text, True)
+                    prev_context = _tail_context(text)
+                    continue
 
                 if self._stop_event.is_set():
                     break
 
-                if not validated:
-                    failed_chunk_count += 1
-                    logger.error(f"Chunk {current_idx} failed after all attempts: {reason}")
-                    marker = f"[UNTRANSLATED CHUNK {current_idx}]"
-                    translated_parts.append(f"{marker}\n{chunk}")
-                    self.progress_callback(
-                        current_idx, total_chunks,
-                        f"⚠️ Chunk {current_idx}: validation failed after all attempts ({reason})"
-                    )
-                elif final_chunk is not None:
-                    translated_parts.append(final_chunk)
-                    sentences = re.split(r'(?<=[.!?؟؛])\s+', final_chunk)
-                    prev_context = " ".join(sentences[-2:]) if len(sentences) > 1 else final_chunk[-300:]
+                # Could not be translated even after retries and splitting: stop here instead of
+                # skipping it, so the document never silently contains an untranslated gap.
+                failure = (current_idx, reason)
+                logger.error(f"Chunk {current_idx} could not be translated after retries and splitting: {reason}")
+                break
 
-            if not self._stop_event.is_set():
-                # 1. Resolve output directory (respect configured output_dir, fallback to source folder)
-                target_out_dir = self.output_dir if self.output_dir else os.path.dirname(self.input_file)
-                os.makedirs(target_out_dir, exist_ok=True)
-
-                base_name, _ = os.path.splitext(os.path.basename(self.input_file))
-                output_filename = f"{base_name}_translated.docx"
-                output_path = os.path.abspath(os.path.join(target_out_dir, output_filename))
-
-                # 2. Write the translated content to a Word Document (preserving paragraphs and RTL for Arabic)
-                doc = Document()
-                is_rtl = (target_lang == "ar")
-                for part in translated_parts:
-                    for para_line in part.splitlines():
-                        cleaned = para_line.strip()
-                        if cleaned:
-                            p = doc.add_paragraph(cleaned)
-                            if is_rtl:
-                                _apply_rtl_to_paragraph(p)
-                doc.save(output_path)
-
-                # 3. Archive the original file safely to prevent re-processing
-                if self.archive_dir:
-                    os.makedirs(self.archive_dir, exist_ok=True)
-                    archive_dest = os.path.join(self.archive_dir, os.path.basename(self.input_file))
-                    if os.path.exists(archive_dest):
-                        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                        archive_dest = os.path.join(self.archive_dir, f"{base_name}_{stamp}.txt")
-                    shutil.move(self.input_file, archive_dest)
-
-                # 4. Terminal Logging (Absolute Path)
-                logger.info(f"Translation successful: {output_filename} ({len(translated_parts)} chunks)")
-                print(f"✅ Translation successful! File saved to: {output_path}")
-                if failed_chunk_count > 0:
-                    logger.warning(f"Translation completed with {failed_chunk_count} failed chunk(s)")
-
-                # 5. UI Notification via callbacks
-                if failed_chunk_count > 0:
-                    self.progress_callback(
-                        total_chunks, total_chunks,
-                        f"⚠️ Complete! {failed_chunk_count} chunk(s) could not be translated"
+            # ── Stopped by the user, or a chunk could not be translated: keep what we have ──
+            if self._stop_event.is_set() or failure:
+                saved_partial = False
+                if ok_count > 0:
+                    self._write_docx(translated_parts, partial_path, is_rtl)
+                    saved_partial = True
+                    logger.info(f"Partial output saved: {partial_path}")
+                partial_note = (f" Partial output saved as {os.path.basename(partial_path)}; "
+                                f"run the same file again to continue from this point." if saved_partial else "")
+                if failure:
+                    self.error_callback(
+                        f"Chunk {failure[0]} could not be translated even after {_MAX_ATTEMPTS} attempts and "
+                        f"splitting it into smaller parts. Reason: {failure[1]}.{partial_note} "
+                        f"(Check the *.debug.* files next to the output for what the model produced.)"
                     )
                 else:
-                    self.progress_callback(
-                        total_chunks, total_chunks,
-                        f"✅ Complete! Saved as {os.path.basename(output_path)}"
-                    )
+                    self.progress_callback(current_idx, total_chunks, f"⏹ Stopped.{partial_note}")
+                return
 
-                if self.completion_callback:
-                    self.completion_callback(output_path)
+            # ── Finished: every chunk translated ────────────────────────────
+            self._write_docx(translated_parts, output_path, is_rtl)
+            for leftover in [partial_path] + debug_files:
+                try:
+                    if os.path.exists(leftover):
+                        os.remove(leftover)
+                except OSError:
+                    pass
+
+            if self.archive_dir:
+                os.makedirs(self.archive_dir, exist_ok=True)
+                archive_dest = os.path.join(self.archive_dir, os.path.basename(self.input_file))
+                if os.path.exists(archive_dest):
+                    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    archive_dest = os.path.join(self.archive_dir, f"{base_name}_{stamp}.txt")
+                shutil.move(self.input_file, archive_dest)
+            try:
+                os.remove(progress_path)
+            except OSError:
+                pass
+
+            logger.info(f"Translation successful: {os.path.basename(output_path)} ({len(translated_parts)} chunks)")
+            self.progress_callback(total_chunks, total_chunks, f"✅ Complete! Saved as {os.path.basename(output_path)}")
+            if self.completion_callback:
+                self.completion_callback(output_path)
 
         except Exception as e:
             error_msg = str(e)
-            logger.error(f"Engine failed (source file kept in place): {error_msg}")
+            logger.error(f"Engine failed (source file kept in place; progress file allows resuming): {error_msg}")
             self.error_callback(f"Engine Error: {error_msg}")
         finally:
             if agent_orchestrator is not None:
@@ -342,46 +450,9 @@ class TranslationEngine(threading.Thread):
     def stop(self):
         self._stop_event.set()
 
-    # ── Chunk validation ────────────────────────────────────────────
-
+    # ── Chunk validation ────────────────────────────────────────────────────
     def _validate_chunk(self, original_chunk, translated, target_lang=None):
-        """Return (is_valid, reason) tuple.
-
-        Checks for:
-          1. Empty output
-          2. Output far shorter than the input (MIN_LENGTH_RATIO threshold)
-          3. Arabic output needs sufficient Arabic letters when target is 'ar'
-          4. Refusal/summary phrases in first 120 chars (ignoring source phrases)
-        """
-        if not translated or not translated.strip():
-            return False, "Empty translation output"
-
-        # Length check
-        ratio = len(translated) / len(original_chunk) if len(original_chunk) > 0 else 0
-        if ratio < _MIN_LENGTH_RATIO:
-            return False, f"Output too short (length ratio {ratio:.2%} < {_MIN_LENGTH_RATIO:.0%})"
-
-        # Arabic letter proportion check (target language 'ar')
-        if target_lang == 'ar':
-            letters = [c for c in translated if c.isalpha()]
-            if letters:
-                arabic_letters = sum(1 for c in letters if '\u0600' <= c <= '\u06FF')
-                arabic_ratio = arabic_letters / len(letters)
-                if arabic_ratio < _MIN_ARABIC_RATIO:
-                    return False, f"Arabic letter proportion too low ({arabic_ratio:.2%} < {_MIN_ARABIC_RATIO:.0%})"
-
-        # Refusal / summary detection — only first 120 chars, skip phrases in source
-        check_text = translated[:_REFUSAL_CHECK_CHARS].lower()
-        source_lower = original_chunk.lower()
-        refusal_phrases = [
-            "i can't", "i cannot", "i'm unable", "i apologize",
-            "i'm sorry", "i am sorry", "as an ai", "as an assistant",
-            "please rephrase", "please provide",
-            "this document contains", "this text contains",
-            "the following", "here is a summary",
-        ]
-        for phrase in refusal_phrases:
-            if phrase in check_text and phrase not in source_lower:
-                return False, f"Refusal/summary pattern detected ('{phrase}')"
-
-        return True, ""
+        """Return (is_valid, reason). Direction-aware; see core/text_utils.validate_chunk."""
+        src_lang = (self.config_manager.get("source_lang") or "en").strip().lower()
+        tgt_lang = (target_lang or self.config_manager.get("target_lang") or "ar").strip().lower()
+        return validate_chunk(original_chunk, translated, src_lang, tgt_lang)

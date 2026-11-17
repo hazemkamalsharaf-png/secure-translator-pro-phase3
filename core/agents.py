@@ -6,6 +6,12 @@ from core.text_utils import extract_translation, strip_markdown, strip_thinking
 
 logger = AppLogger.get_instance()
 
+
+class OutputTruncatedError(Exception):
+    """Raised when an LLM output is cut off due to token limits."""
+    pass
+
+
 LANG_NAMES = {
     "en": "English",
     "ar": "Arabic",

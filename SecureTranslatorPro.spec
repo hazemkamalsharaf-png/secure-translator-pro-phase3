@@ -2,7 +2,7 @@
 from PyInstaller.utils.hooks import collect_submodules
 from PyInstaller.utils.hooks import collect_all
 
-datas = [('E:/secure_translator_pro_backup_phase3/data', 'data')]
+datas = [('/media/hazemkamal/New Volume/secure_translator_pro_backup_phase3/data', 'data')]
 binaries = []
 hiddenimports = []
 hiddenimports += collect_submodules('ui')
@@ -13,8 +13,8 @@ datas += tmp_ret[0]; binaries += tmp_ret[1]; hiddenimports += tmp_ret[2]
 
 
 a = Analysis(
-    ['E:/secure_translator_pro_backup_phase3/main.py'],
-    pathex=['E:/secure_translator_pro_backup_phase3'],
+    ['/media/hazemkamal/New Volume/secure_translator_pro_backup_phase3/main.py'],
+    pathex=['/media/hazemkamal/New Volume/secure_translator_pro_backup_phase3'],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

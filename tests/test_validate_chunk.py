@@ -15,7 +15,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 import unittest
 from unittest.mock import MagicMock, patch
 
-from core.engine import TranslationEngine, _MIN_LENGTH_RATIO, _MIN_ARABIC_RATIO
+from core.engine import TranslationEngine
+from core.text_utils import validate_chunk, _MIN_ARABIC
 
 
 class TestValidateChunk(unittest.TestCase):
@@ -50,18 +51,16 @@ class TestValidateChunk(unittest.TestCase):
     # ── 2. Summary-length output ───────────────────────────────────────
 
     def test_short_summary_rejected(self):
-        """Translation much shorter than source (below min length ratio) → rejected."""
+        """Translation much shorter than source (below min word ratio) → rejected."""
         engine = self._make_engine()
 
         source = "This is a detailed description of the scene with many adjectives and adverbs and clauses."
-        short_translation = "OK"  # way too short
-        ratio = len(short_translation) / len(source)
+        short_translation = "OK"  # way too short (1 word vs 14 words)
 
         is_valid, reason = engine._validate_chunk(source, short_translation)
         self.assertFalse(is_valid)
         self.assertIn("too short", reason)
-        # Verify the ratio is present in the message (allow minor float formatting diffs)
-        self.assertTrue("2%" in reason or "2.25%" in reason)
+        self.assertIn("word ratio", reason)
 
     # ── 3. Valid Arabic translation containing "I can't" ──────────────
 

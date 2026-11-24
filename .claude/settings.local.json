@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pyinstaller --onefile --windowed SecureTranslatorPro.spec)",
+      "Bash(pyinstaller SecureTranslatorPro.spec)"
+    ]
+  }
+}

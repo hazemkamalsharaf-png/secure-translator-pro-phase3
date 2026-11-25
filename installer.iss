@@ -6,7 +6,7 @@
 ; =============================================================================
 
 #define MyAppName "Secure Translator Pro"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "Hazem Kamal Sharaf"
 #define MyAppURL "https://github.com/hazemkamalsharaf-png/secure-translator-pro-phase3"
 #define MyAppExeName "SecureTranslatorPro.exe"
